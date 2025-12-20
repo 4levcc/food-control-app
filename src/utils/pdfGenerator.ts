@@ -135,7 +135,6 @@ export const exportRecipePDF = (
     }
 
     // Save
-    // Save
     const sanitizeFilename = (name: string) => {
         return name.replace(/[<>:"/\\|?*]/g, '');
     };
@@ -143,4 +142,104 @@ export const exportRecipePDF = (
     const suffix = mode === 'full' ? 'gerencia' : 'produção';
     const fileName = `FT - ${sanitizeFilename(recipe.name)} - ${suffix}.pdf`;
     doc.save(fileName);
+};
+
+export const exportShoppingListPDF = (
+    items: { name: string; quantity: number; unit: string; cost: number; supplier: string }[],
+    totalCost: number,
+    groupedItems?: {
+        final: { name: string; quantity: number; unit: string; cost: number; supplier: string }[],
+        base: { name: string; quantity: number; unit: string; cost: number; supplier: string }[]
+    }
+) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    // Helper
+    const formatCurrency = (val: number) => {
+        return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    };
+
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(40);
+    doc.text('Lista de Compras', 14, 20);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Gerado em: ${new Date().toLocaleDateString()}`, 14, 28);
+
+    // Total Cost
+    doc.setFillColor(240, 240, 240);
+    doc.rect(14, 35, pageWidth - 28, 14, 'F'); // Increased height
+    doc.setFontSize(12); // Slightly larger
+    doc.setTextColor(60);
+    doc.text('Custo Estimado Total:', 18, 44);
+    doc.setFontSize(14);
+    doc.setTextColor(37, 99, 235); // Blue
+    doc.text(formatCurrency(totalCost), pageWidth - 18, 44, { align: 'right' });
+
+    // Table Logic
+    const renderTable = (data: typeof items, startY: number, title?: string) => {
+        if (data.length === 0) return startY;
+
+        if (title) {
+            doc.setFontSize(14);
+            doc.setTextColor(0);
+            doc.text(title, 14, startY - 5);
+        }
+
+        const tableBody = data.map(item => [
+            item.name,
+            item.supplier || '-',
+            `${item.quantity.toFixed(2)} ${item.unit}`,
+            formatCurrency(item.cost)
+        ]);
+
+        autoTable(doc, {
+            startY: startY,
+            head: [['Item', 'Fornecedor', 'Qtd.', 'Estimativa']],
+            body: tableBody,
+            theme: 'grid',
+            headStyles: { fillColor: title?.includes('Base') ? [234, 88, 12] : [37, 99, 235] }, // Orange for Base, Blue for Final
+            styles: { fontSize: 10, cellPadding: 3 },
+            columnStyles: {
+                2: { halign: 'right' },
+                3: { halign: 'right', fontStyle: 'bold' }
+            }
+        });
+
+        // @ts-ignore
+        return doc.lastAutoTable.finalY + 15;
+    };
+
+    if (groupedItems) {
+        let currentY = 65;
+        if (groupedItems.final.length > 0) {
+            currentY = renderTable(groupedItems.final, currentY, 'Itens de Produtos Finais');
+        }
+        if (groupedItems.base.length > 0) {
+            renderTable(groupedItems.base, currentY, 'Itens de Receitas Base');
+        }
+    } else {
+        renderTable(items, 60);
+    }
+
+    // Footer
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(150);
+
+        // Line 1: Attribution
+        const attribution = "Desenvolvido por INOVARE Gestão Estratégica + Elaine Duarte Consultoria Gastronômica para Benta Brigaderia";
+        doc.text(attribution, pageWidth / 2, pageHeight - 15, { align: 'center' });
+
+        // Line 2: Brand + Page Number
+        doc.text(`FoodControl - Página ${i} of ${pageCount}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+    }
+
+    doc.save(`Lista_de_Compras_${new Date().toISOString().split('T')[0]}.pdf`);
 };

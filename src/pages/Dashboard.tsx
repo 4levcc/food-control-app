@@ -3,7 +3,7 @@ import { useStore } from '../hooks/useStore';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, AlertCircle, ChefHat, DollarSign } from 'lucide-react';
+import { TrendingUp, AlertCircle, ChefHat, DollarSign, Info } from 'lucide-react';
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
@@ -52,14 +52,38 @@ export const Dashboard: React.FC = () => {
             : 0;
 
         const lowMarginCount = productsWithPrice.filter(p => p.marginPercent < 30).length;
-        const topProfitable = [...productsWithPrice].sort((a, b) => b.marginPercent - a.marginPercent).slice(0, 5);
 
-        // 3. Sector Distribution
-        const sectorCounts = finalProducts.reduce((acc, curr) => {
-            const sector = curr.sector || 'Outros';
-            acc[sector] = (acc[sector] || 0) + 1;
-            return acc;
-        }, {} as Record<string, number>);
+        // Sorting for Best/Worst
+        const sortedByMargin = [...productsWithPrice].sort((a, b) => b.marginPercent - a.marginPercent);
+        const topProfitable = sortedByMargin.slice(0, 5);
+        const worstProfitable = [...sortedByMargin].reverse().slice(0, 5);
+
+        // 3. Sector Distribution & Stats
+        const sectorCounts: Record<string, number> = {};
+        const sectorFinancials: Record<string, { totalMargin: number; totalCmv: number; count: number }> = {};
+
+        finalProducts.forEach(rec => {
+            const sector = rec.sector || 'Outros';
+            sectorCounts[sector] = (sectorCounts[sector] || 0) + 1;
+        });
+
+        // Calculate Sector Financials (only for items with price)
+        productsWithPrice.forEach(rec => {
+            const sector = rec.sector || 'Outros';
+            if (!sectorFinancials[sector]) {
+                sectorFinancials[sector] = { totalMargin: 0, totalCmv: 0, count: 0 };
+            }
+            sectorFinancials[sector].totalMargin += rec.marginPercent;
+            sectorFinancials[sector].totalCmv += rec.cmvPercent;
+            sectorFinancials[sector].count += 1;
+        });
+
+        const sectorStats = Object.entries(sectorFinancials).map(([sector, data]) => ({
+            sector,
+            avgMargin: data.count > 0 ? data.totalMargin / data.count : 0,
+            avgCmv: data.count > 0 ? data.totalCmv / data.count : 0,
+            count: data.count
+        }));
 
         const sectorData = Object.entries(sectorCounts).map(([name, value]) => ({ name, value }));
 
@@ -72,7 +96,9 @@ export const Dashboard: React.FC = () => {
             avgCmv,
             lowMarginCount,
             topProfitable,
+            worstProfitable,
             sectorData,
+            sectorStats,
             productsWithPriceCount: productsWithPrice.length,
             alerts: productsWithPrice.filter(p => p.marginPercent < 30) // Critical Alerts
         };
@@ -228,6 +254,89 @@ export const Dashboard: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Top 5 Worst Profitability */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 className="font-bold text-gray-900 mb-6">Top 5 - Pior Rentabilidade</h3>
+                <div className="h-72">
+                    {stats.worstProfitable.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                                data={stats.worstProfitable}
+                                layout="vertical"
+                                margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                            >
+                                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                                <XAxis type="number" unit="%" />
+                                <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 12 }} />
+                                <Tooltip
+                                    formatter={(value: number) => [`${value.toFixed(1)}%`, 'Margem']}
+                                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                />
+                                <Bar dataKey="marginPercent" fill="#EF4444" radius={[0, 4, 4, 0]} barSize={20} name="Margem %" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    ) : (
+                        <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+                            Insuficiente dados de preço para exibir gráfico.
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Profitability by Sector Cards */}
+            {stats.sectorStats.length > 0 && (
+                <div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-4">Rentabilidade por Setor</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {stats.sectorStats.map((sector) => (
+                            <div key={sector.sector} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                                <div className="flex items-center mb-2">
+                                    <DollarSign className="text-yellow-600 mr-2" size={20} />
+                                    <h4 className="font-bold text-gray-900">Rentabilidade - {sector.sector}</h4>
+                                    <div className="ml-auto group relative">
+                                        <Info size={16} className="text-gray-400 cursor-help" />
+                                        <span className="absolute right-0 top-6 w-48 bg-gray-800 text-white text-xs rounded p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
+                                            Baseado em {sector.count} produtos com preço.
+                                        </span>
+                                    </div>
+                                </div>
+                                <p className="text-xs text-gray-500 mb-6">Margem de contribuição média</p>
+
+                                <div className="space-y-4">
+                                    {/* CMV Bar */}
+                                    <div>
+                                        <div className="flex justify-between text-sm mb-1">
+                                            <span className="text-gray-600">CMV Médio</span>
+                                            <span className="font-bold text-orange-600">{sector.avgCmv.toFixed(2)}%</span>
+                                        </div>
+                                        <div className="w-full bg-gray-100 rounded-full h-2.5">
+                                            <div
+                                                className="bg-orange-500 h-2.5 rounded-full transition-all duration-500"
+                                                style={{ width: `${Math.min(sector.avgCmv, 100)}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
+
+                                    {/* MC Bar */}
+                                    <div>
+                                        <div className="flex justify-between text-sm mb-1">
+                                            <span className="text-gray-600">MC Média</span>
+                                            <span className="font-bold text-green-600">{sector.avgMargin.toFixed(2)}%</span>
+                                        </div>
+                                        <div className="w-full bg-gray-100 rounded-full h-2.5">
+                                            <div
+                                                className="bg-green-500 h-2.5 rounded-full transition-all duration-500"
+                                                style={{ width: `${Math.min(sector.avgMargin, 100)}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Critical Alerts List */}
             {stats.alerts.length > 0 && (
