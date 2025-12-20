@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { Plus, Search, Pencil, Trash2, AlertTriangle, Copy } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { Plus, Search, Pencil, Trash2, AlertTriangle, Copy, Download } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
-import { IngredientForm, SYNTHETIC_CATEGORIES } from '../components/IngredientForm';
+import { IngredientForm } from '../components/IngredientForm';
 import { IngredientImport } from '../components/IngredientImport';
 import type { Ingredient } from '../types';
 
 export const Ingredients: React.FC = () => {
-    const { ingredients, deleteIngredient, deleteIngredients } = useStore();
+    const { ingredients, deleteIngredient, deleteIngredients, settings } = useStore();
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingIngredient, setEditingIngredient] = useState<Ingredient | undefined>(undefined);
     const [searchTerm, setSearchTerm] = useState('');
@@ -15,8 +16,8 @@ export const Ingredients: React.FC = () => {
     const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
     const [filterCategory, setFilterCategory] = useState<string>('All');
 
-    // Use the predefined categories
-    const syntheticCategories = SYNTHETIC_CATEGORIES;
+    // Use the dynamic categories from settings
+    const syntheticCategories = settings.syntheticCategories;
 
     const filteredIngredients = ingredients.filter((ing) => {
         const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase());
@@ -69,19 +70,63 @@ export const Ingredients: React.FC = () => {
         setShowBulkDeleteConfirm(false);
     };
 
+    const handleExportSelected = () => {
+        const ingredientsToExport = ingredients.filter(ing => selectedIds.includes(ing.id));
+
+        const headers = [
+            'Nome Padronizado',
+            'Descrição (Benta)',
+            'Categoria',
+            'Categoria Sintética',
+            'Fornecedor',
+            'Custo Compra',
+            'Qtd Comprada',
+            'Peso Unidade',
+            'Unidade Ref (g/ml)',
+            'Fator Correção'
+        ];
+
+        const exportData = ingredientsToExport.map(ing => ({
+            'Nome Padronizado': ing.name,
+            'Descrição (Benta)': ing.description,
+            'Categoria': ing.category,
+            'Categoria Sintética': ing.syntheticCategory,
+            'Fornecedor': ing.supplier,
+            'Custo Compra': ing.purchaseCost,
+            'Qtd Comprada': ing.purchaseQuantity,
+            'Peso Unidade': ing.unitWeight,
+            'Unidade Ref (g/ml)': ing.referenceUnit,
+            'Fator Correção': ing.correctionFactor
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(exportData, { header: headers });
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Insumos");
+        XLSX.writeFile(wb, "insumos_foodcontrol.xlsx");
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h2 className="text-2xl font-bold text-gray-900">Insumos</h2>
                 <div className="flex space-x-2">
                     {selectedIds.length > 0 ? (
-                        <button
-                            onClick={() => setShowBulkDeleteConfirm(true)}
-                            className="bg-red-600 text-white px-4 py-2 rounded-lg shadow hover:bg-red-700 transition-colors flex items-center"
-                        >
-                            <Trash2 size={18} className="mr-2" />
-                            Excluir ({selectedIds.length})
-                        </button>
+                        <>
+                            <button
+                                onClick={handleExportSelected}
+                                className="bg-green-600 text-white px-4 py-2 rounded-lg shadow hover:bg-green-700 transition-colors flex items-center"
+                            >
+                                <Download size={18} className="mr-2" />
+                                Exportar
+                            </button>
+                            <button
+                                onClick={() => setShowBulkDeleteConfirm(true)}
+                                className="bg-red-600 text-white px-4 py-2 rounded-lg shadow hover:bg-red-700 transition-colors flex items-center"
+                            >
+                                <Trash2 size={18} className="mr-2" />
+                                Excluir ({selectedIds.length})
+                            </button>
+                        </>
                     ) : (
                         <>
                             <IngredientImport />

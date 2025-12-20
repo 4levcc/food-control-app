@@ -6,6 +6,7 @@ import { FinalProducts } from './pages/FinalProducts';
 import { MarginsAnalytics } from './pages/MarginsAnalytics';
 import { Simulator } from './pages/Simulator';
 import { Dashboard } from './pages/Dashboard';
+import { GeneralSettings } from './pages/GeneralSettings';
 import { FoodControlProvider } from './contexts/FoodControlContext';
 
 // Placeholder components for now
@@ -21,6 +22,7 @@ function App() {
             <Route path="/products" element={<FinalProducts />} /> {/* New Route */}
             <Route path="/analytics" element={<MarginsAnalytics />} /> {/* New Route */}
             <Route path="/recipes" element={<Recipes />} />
+            <Route path="/settings" element={<GeneralSettings />} />
             <Route path="/simulator" element={<Simulator />} />
             <Route path="*" element={<Dashboard />} /> {/* Catch-all redirects to Dashboard */}
           </Routes>

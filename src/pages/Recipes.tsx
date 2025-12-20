@@ -7,7 +7,7 @@ import { exportRecipePDF } from '../utils/pdfGenerator';
 import type { Recipe } from '../types';
 
 export const Recipes: React.FC = () => {
-    const { recipes, ingredients, deleteRecipe, deleteRecipes } = useStore();
+    const { recipes, ingredients, deleteRecipe, deleteRecipes, addRecipe, settings } = useStore();
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -16,6 +16,10 @@ export const Recipes: React.FC = () => {
 
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+
+    // New Filters
+    const [filterSector, setFilterSector] = useState<string>('All');
+    const [filterSpecialty, setFilterSpecialty] = useState<string>('All');
 
     // PDF Export State
     const [exportModalRecipe, setExportModalRecipe] = useState<Recipe | null>(null);

@@ -8,27 +8,19 @@ interface IngredientFormProps {
     initialData?: Ingredient;
 }
 
-const CATEGORIES = [
-    'Bebidas', 'Confeitaria', 'Embalagens', 'Gorduras', 'Laticínios',
-    'Chocolates e Cacau', 'Mercearia Seca', 'Proteínas', 'Saborizantes'
-];
-
-export const SYNTHETIC_CATEGORIES = [
-    'Insumo de produção pronto',
-    'Insumo de produção produzido',
-    'Embalagens',
-    'Outros insumos'
-];
-
 export const IngredientForm: React.FC<IngredientFormProps> = ({ onClose, initialData }) => {
-    const { addIngredient, updateIngredient } = useStore();
+    const { addIngredient, updateIngredient, settings } = useStore();
+
+    // Ensure we have at least one category to default to, or empty string
+    const defaultCategory = settings.categories[0] || '';
+    const defaultSynthetic = settings.syntheticCategories[0] || '';
 
     // Initialize state with initialData if provided
     const [formData, setFormData] = useState({
         name: initialData?.name || '', // Nome Padronizado
         description: initialData?.description || '', // Benta Descrição
-        category: initialData?.category || CATEGORIES[0],
-        syntheticCategory: initialData?.syntheticCategory || SYNTHETIC_CATEGORIES[0],
+        category: initialData?.category || defaultCategory,
+        syntheticCategory: initialData?.syntheticCategory || defaultSynthetic,
         supplier: initialData?.supplier || '',
 
         purchaseCost: initialData?.purchaseCost?.toString() || '', // Custo Compra
@@ -160,7 +152,7 @@ export const IngredientForm: React.FC<IngredientFormProps> = ({ onClose, initial
                                 value={formData.category}
                                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                             >
-                                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                {settings.categories.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                         </div>
 
@@ -171,7 +163,7 @@ export const IngredientForm: React.FC<IngredientFormProps> = ({ onClose, initial
                                 value={formData.syntheticCategory}
                                 onChange={(e) => setFormData({ ...formData, syntheticCategory: e.target.value })}
                             >
-                                {SYNTHETIC_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                {settings.syntheticCategories.map(c => <option key={c} value={c}>{c}</option>)}
                             </select>
                         </div>
                     </div>

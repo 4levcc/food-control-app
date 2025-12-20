@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ShoppingCart, ChefHat, Package, TrendingUp } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, ChefHat, Package, TrendingUp, Settings } from 'lucide-react';
 
 export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const location = useLocation();
@@ -10,6 +10,7 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
         { path: '/products', icon: ShoppingCart, label: 'Produtos Finais' },
         { path: '/ingredients', icon: Package, label: 'Insumos' },
         { path: '/recipes', icon: ChefHat, label: 'Fichas Técnicas' },
+        { path: '/settings', icon: Settings, label: 'Cadastro Geral' },
         { path: '/analytics', icon: TrendingUp, label: 'Análise de Margens' },
         { path: '/simulator', icon: ShoppingCart, label: 'Simulador de Compras' },
     ];

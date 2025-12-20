@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Save, ExternalLink, Filter } from 'lucide-react';
-import { RecipeEditor, SECTORS, SPECIALTIES } from '../components/RecipeEditor';
+import { RecipeEditor } from '../components/RecipeEditor';
 import type { Recipe } from '../types';
 
 export const FinalProducts: React.FC = () => {
-    const { recipes, ingredients, updateRecipe } = useStore();
+    const { recipes, ingredients, updateRecipe, settings } = useStore();
     const [prices, setPrices] = useState<Record<string, string>>({});
     const [openRecipeId, setOpenRecipeId] = useState<string | null>(null);
     const [filterSector, setFilterSector] = useState<string>('All');
@@ -61,7 +61,7 @@ export const FinalProducts: React.FC = () => {
                     className="w-full md:w-auto px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                 >
                     <option value="All">Todos os Setores</option>
-                    {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+                    {settings.sectors.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
 
                 {/* Specialty Filter */}
@@ -71,7 +71,7 @@ export const FinalProducts: React.FC = () => {
                     className="w-full md:w-auto px-4 py-2 border border-blue-300 bg-blue-50 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-blue-900"
                 >
                     <option value="All">Todas as Especialidades</option>
-                    {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+                    {settings.specialties.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
 
                 {(filterSector !== 'All' || filterSpecialty !== 'All') && (

@@ -135,6 +135,12 @@ export const exportRecipePDF = (
     }
 
     // Save
-    const fileName = `${recipe.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${mode}.pdf`;
+    // Save
+    const sanitizeFilename = (name: string) => {
+        return name.replace(/[<>:"/\\|?*]/g, '');
+    };
+
+    const suffix = mode === 'full' ? 'gerencia' : 'produção';
+    const fileName = `FT - ${sanitizeFilename(recipe.name)} - ${suffix}.pdf`;
     doc.save(fileName);
 };
