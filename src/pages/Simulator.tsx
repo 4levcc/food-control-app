@@ -1,340 +1,311 @@
-import React, { useState, useMemo } from 'react';
-import { ArrowRight, FileText, Layers } from 'lucide-react'; // Added icons
-import { useStore } from '../hooks/useStore';
+
+import { useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import type { FichaTecnica, Insumo, UnidadeMedida, FtIngrediente, SetorResponsavel } from '../types';
+import { Search, Calculator, ShoppingCart, Trash2, FileText, ArrowRight, CheckSquare } from 'lucide-react';
+import { useSimulatorLogic } from '../hooks/useSimulatorLogic';
 import { exportShoppingListPDF } from '../utils/pdfGenerator';
-import type { Recipe } from '../types';
 
-export const Simulator: React.FC = () => {
-    const { recipes, ingredients } = useStore();
-    const [selectedRecipes, setSelectedRecipes] = useState<Record<string, number>>({});
-    const [step, setStep] = useState<'select' | 'result'>('select');
-    const [explodeBaseIngredients, setExplodeBaseIngredients] = useState(false);
-    const [filter, setFilter] = useState<'all' | 'base' | 'final'>('all');
+export function Simulator() {
+    const [recipes, setRecipes] = useState<FichaTecnica[]>([]);
+    const [ftIngredientes, setFtIngredientes] = useState<FtIngrediente[]>([]);
+    const [insumos, setInsumos] = useState<Insumo[]>([]);
+    const [unidades, setUnidades] = useState<UnidadeMedida[]>([]);
+    const [setores, setSetores] = useState<SetorResponsavel[]>([]);
 
-    const handleManualQuantityChange = (recipeId: string, value: string) => {
-        const val = parseInt(value, 10);
-        if (isNaN(val) || val < 0) return;
+    const [searchTerm, setSearchTerm] = useState('');
+    const [selectedSector, setSelectedSector] = useState('all');
 
-        setSelectedRecipes(prev => {
-            if (val === 0) {
-                const { [recipeId]: _, ...rest } = prev;
-                return rest;
-            }
-            return { ...prev, [recipeId]: val };
-        });
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            const [r, f, i, u, s] = await Promise.all([
+                supabase.from('fichas_tecnicas').select('*').order('nome_receita'),
+                supabase.from('ft_ingredientes').select('*'),
+                supabase.from('insumos').select('*'),
+                supabase.from('unidades_medida').select('*'),
+                supabase.from('setores_responsaveis').select('*').order('nome')
+            ]);
+            if (r.data) setRecipes(r.data);
+            if (f.data) setFtIngredientes(f.data);
+            if (i.data) setInsumos(i.data);
+            if (u.data) setUnidades(u.data);
+            if (s.data) setSetores(s.data);
+        } catch (error) {
+            console.error('Error fetching data for simulator:', error);
+        }
     };
 
-    const shoppingList = useMemo(() => {
-        const finalList: Record<string, { quantity: number; cost: number; ingredientId: string }> = {};
-        const baseList: Record<string, { quantity: number; cost: number; ingredientId: string }> = {};
+    const logic = useSimulatorLogic({ recipes, ftIngredientes, insumos, unidades });
 
-        // Helper to add to specific list
-        const addToList = (
-            list: typeof finalList,
-            item: { ingredientId: string; quantity: number },
-            ing: { price: number; correctionFactor?: number },
-            batchCount: number
-        ) => {
-            if (!list[item.ingredientId]) {
-                list[item.ingredientId] = {
-                    quantity: 0,
-                    cost: 0,
-                    ingredientId: item.ingredientId
-                };
-            }
-            // Gross Quantity logic
-            const grossQuantity = item.quantity * (ing.correctionFactor || 1) * batchCount;
-            const cost = grossQuantity * ing.price;
+    const handleAddRecipe = (recipe: FichaTecnica) => {
+        if (!logic.selectedRecipes.find(r => r.recipeId === recipe.id)) {
+            // Default quantity: Rendimento or 1
+            const defaultQty = recipe.rendimento_kg || 1;
+            logic.setSelectedRecipes(prev => [...prev, { recipeId: recipe.id, quantity: defaultQty }]);
+        }
+    };
 
-            list[item.ingredientId].quantity += grossQuantity;
-            list[item.ingredientId].cost += cost;
-        };
+    const handleRemoveRecipe = (id: string) => {
+        logic.setSelectedRecipes(prev => prev.filter(r => r.recipeId !== id));
+    };
 
-        // Recursive function to collect ingredients
-        const collectIngredients = (recipe: Recipe, batches: number, isBaseRecursion: boolean) => {
-            recipe.items.forEach(item => {
-                const ing = ingredients.find(i => i.id === item.ingredientId);
-                if (!ing) return;
+    const handleUpdateQuantity = (id: string, newQty: number) => {
+        logic.setSelectedRecipes(prev => prev.map(r => r.recipeId === id ? { ...r, quantity: newQty } : r));
+    };
 
-                // Check for Base Product Match (Explode Logic)
-                let baseRecipe: Recipe | undefined;
-                if (explodeBaseIngredients) {
-                    baseRecipe = recipes.find(r =>
-                        r.name === ing.name &&
-                        (r.productType === 'Base' || r.isIngredient)
-                    );
-                }
+    const filteredRecipes = recipes.filter(r => {
+        const matchSearch = r.nome_receita.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchSector = selectedSector === 'all' || r.setor_responsavel_id === selectedSector;
+        return matchSearch && matchSector;
+    });
 
-                if (baseRecipe) {
-                    // Calculate batches needed
-                    const totalBaseIngNeeded = item.quantity * batches;
-                    const yieldVal = baseRecipe.yieldGrams || (baseRecipe.yieldKg * 1000) || 1;
-                    const baseBatches = totalBaseIngNeeded / yieldVal;
+    const handleExport = () => {
+        // Separate items for grouping
+        // Ensure supplier is string for PDF generator
+        const safeList = logic.shoppingList.map(i => ({ ...i, supplier: i.supplier || '' }));
 
-                    // Recurse as 'Base'
-                    collectIngredients(baseRecipe, baseBatches, true);
-                } else {
-                    // Regular Ingredient
-                    if (explodeBaseIngredients) {
-                        // If exploding, separate into lists
-                        if (isBaseRecursion) {
-                            addToList(baseList, item, ing, batches);
-                        } else {
-                            addToList(finalList, item, ing, batches);
-                        }
-                    } else {
-                        // Not exploding: everything goes to main list (finalList acts as main)
-                        addToList(finalList, item, ing, batches);
-                    }
-                }
-            });
-        };
+        const finalItems = safeList.filter(i => !i.isBaseProduct);
+        const baseItems = safeList.filter(i => i.isBaseProduct);
 
-        Object.entries(selectedRecipes).forEach(([recipeId, batchCount]) => {
-            const recipe = recipes.find(r => r.id === recipeId);
-            if (recipe) {
-                // Start recursion as 'Final' (isBaseRecursion = false)
-                collectIngredients(recipe, batchCount, false);
-            }
-        });
-
-        // Formatter
-        const formatList = (list: typeof finalList) => Object.values(list).map(item => {
-            const ing = ingredients.find(i => i.id === item.ingredientId);
+        // Prepare selected recipes list
+        const recipesList = logic.selectedRecipes.map(s => {
+            const r = recipes.find(x => x.id === s.recipeId);
             return {
-                ...item,
-                name: ing?.name || 'Unknown',
-                unit: ing?.unit || '',
-                supplier: ing?.supplier || 'N/A'
+                name: r?.nome_receita || 'Desconhecido',
+                quantity: s.quantity
             };
-        }).sort((a, b) => a.name.localeCompare(b.name));
-
-        return {
-            final: formatList(finalList),
-            base: formatList(baseList),
-            all: formatList({ ...finalList, ...baseList }) // Fallback/Combined if needed
-        };
-    }, [selectedRecipes, recipes, ingredients, explodeBaseIngredients]);
-
-    // Calculate total cost from both lists
-    const totalEstimatedCost = shoppingList.final.reduce((sum, item) => sum + item.cost, 0) +
-        shoppingList.base.reduce((sum, item) => sum + item.cost, 0);
-
-    // Check if any selected recipe has base products (to enable/disable toggle)
-    const hasBaseProducts = useMemo(() => {
-        return Object.keys(selectedRecipes).some(id => {
-            const recipe = recipes.find(r => r.id === id);
-            if (!recipe) return false;
-            // Check if any ingredient matches a base recipe
-            return recipe.items.some(item => {
-                const ing = ingredients.find(i => i.id === item.ingredientId);
-                if (!ing) return false;
-                return recipes.some(r => r.name === ing.name && (r.productType === 'Base' || r.isIngredient));
-            });
         });
-    }, [selectedRecipes, recipes, ingredients]);
 
-    const filteredRecipes = useMemo(() => {
-        return recipes.filter(rec => {
-            if (filter === 'all') return true;
-            if (filter === 'base') return rec.productType === 'Base';
-            if (filter === 'final') return rec.productType === 'Final';
-            return true;
-        });
-    }, [recipes, filter]);
-
-
-    if (step === 'result') {
-        const hasBaseItems = shoppingList.base.length > 0;
-
-        return (
-            <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-2xl font-bold text-gray-900">Lista de Compras</h2>
-                    <button
-                        onClick={() => setStep('select')}
-                        className="text-blue-600 font-medium hover:underline"
-                    >
-                        Voltar
-                    </button>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                    <div className="p-4 bg-blue-50 border-b border-blue-100 flex justify-between items-center">
-                        <div>
-                            <span className="text-blue-900 font-medium block">Custo Estimado Total</span>
-                            {explodeBaseIngredients && <span className="text-xs text-blue-600">(Com produtos base explodidos)</span>}
-                        </div>
-                        <span className="text-2xl font-bold text-blue-700">R$ {totalEstimatedCost.toFixed(2)}</span>
-                    </div>
-
-                    <div className="divide-y divide-gray-100 p-4">
-                        {/* Final Products List */}
-                        {hasBaseItems && <h3 className="font-bold text-gray-800 mb-2 mt-2">Itens de Produtos Finais</h3>}
-                        {shoppingList.final.map((item) => (
-                            <div key={item.ingredientId} className="py-3 flex justify-between items-center hover:bg-gray-50 transition-colors border-b last:border-0 border-gray-100">
-                                <div>
-                                    <h4 className="font-semibold text-gray-900">{item.name}</h4>
-                                    <p className="text-xs text-gray-500">{item.supplier}</p>
-                                </div>
-                                <div className="text-right">
-                                    <div className="font-bold text-lg text-gray-900">
-                                        {item.quantity.toFixed(2)} <span className="text-sm font-normal text-gray-500">{item.unit}</span>
-                                    </div>
-                                    <div className="text-sm text-gray-600">R$ {item.cost.toFixed(2)}</div>
-                                </div>
-                            </div>
-                        ))}
-
-                        {/* Base Products List */}
-                        {hasBaseItems && (
-                            <>
-                                <h3 className="font-bold text-orange-800 mb-2 mt-6 border-t pt-4">Itens de Receitas Base</h3>
-                                {shoppingList.base.map((item) => (
-                                    <div key={item.ingredientId} className="py-3 flex justify-between items-center hover:bg-orange-50 transition-colors border-b last:border-0 border-gray-100 bg-orange-50/30 rounded px-2">
-                                        <div>
-                                            <h4 className="font-semibold text-gray-900">{item.name}</h4>
-                                            <p className="text-xs text-gray-500">{item.supplier}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-bold text-lg text-gray-900">
-                                                {item.quantity.toFixed(2)} <span className="text-sm font-normal text-gray-500">{item.unit}</span>
-                                            </div>
-                                            <div className="text-sm text-gray-600">R$ {item.cost.toFixed(2)}</div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </>
-                        )}
-
-
-                        {shoppingList.final.length === 0 && shoppingList.base.length === 0 && (
-                            <div className="p-10 text-center text-gray-500">
-                                Nenhum item na lista de compras.
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="flex gap-4">
-                    <button
-                        onClick={() => exportShoppingListPDF(
-                            [], // Pass empty main list since we use grouped
-                            totalEstimatedCost,
-                            { final: shoppingList.final, base: shoppingList.base }
-                        )}
-                        className="flex-1 bg-white border border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-50 transition-colors flex justify-center items-center shadow-sm"
-                    >
-                        <FileText size={20} className="mr-2" />
-                        Exportar PDF
-                    </button>
-                </div>
-            </div>
+        exportShoppingListPDF(
+            safeList,
+            logic.totalCost,
+            {
+                final: finalItems,
+                base: baseItems
+            },
+            recipesList // Pass the list
         );
-    }
+    };
 
     return (
-        <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-900">Simulador de Compras</h2>
-            <div className="flex justify-between items-center">
-                <p className="text-gray-600">Selecione as receitas e quantidades que deseja produzir.</p>
-
-                {/* Filter */}
-                <div className="inline-flex bg-white border border-gray-200 rounded-lg p-1 shadow-sm">
-                    <button
-                        onClick={() => setFilter('all')}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${filter === 'all'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                            }`}
-                    >
-                        Todos
-                    </button>
-                    <button
-                        onClick={() => setFilter('base')}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${filter === 'base'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                            }`}
-                    >
-                        Prod. Base
-                    </button>
-                    <button
-                        onClick={() => setFilter('final')}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${filter === 'final'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                            }`}
-                    >
-                        Prod. Final
-                    </button>
+        <div className="space-y-8 animate-in fade-in duration-500">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800">Simulador de Compras</h1>
+                    <p className="text-gray-600 mt-1">Planeje sua produção e gere a lista de compras automaticamente.</p>
                 </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredRecipes.map((rec) => {
-                    const count = selectedRecipes[rec.id] || 0;
-                    return (
-                        <div key={rec.id} className={`p-4 rounded-lg border transition-all ${count > 0 ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white'}`}>
-                            <div className="flex justify-between items-start mb-4">
-                                <h3 className="font-bold text-gray-900 leading-tight">{rec.name}</h3>
-                                <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ml-2 ${rec.productType === 'Base' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
-                                    {rec.productType === 'Base' ? 'Base' : 'Final'}
-                                </span>
-                            </div>
+            {/* Selection Area */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                            <div className="flex items-center justify-between mt-auto">
-                                <span className="text-sm font-medium text-gray-700">Quantidade:</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={count}
-                                    onChange={(e) => handleManualQuantityChange(rec.id, e.target.value)}
-                                    className="w-full h-10 text-center font-bold text-lg border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                    aria-label={`Quantidade de ${rec.name}`}
-                                    placeholder="0"
-                                />
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+                {/* Left: Recipe Selector */}
+                <div className="lg:col-span-1 bg-white rounded-lg shadow-sm border border-gray-200 p-4 h-[600px] flex flex-col">
+                    <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
+                        <Search size={20} />
+                        Selecionar Receitas
+                    </h3>
 
-            {Object.keys(selectedRecipes).length > 0 && (
-                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-sm border-t border-gray-200 flex flex-col md:flex-row justify-center items-center gap-4 shadow-lg z-10 transition-all animate-slide-up">
-
-                    {/* Explode Toggle */}
-                    <div className={`flex items-center space-x-2 px-4 py-2 rounded-lg border transition-colors ${hasBaseProducts
-                        ? 'bg-orange-50 border-orange-200 text-orange-800'
-                        : 'bg-gray-50 border-gray-200 text-gray-400 opacity-75'}`}>
-                        <div className="flex items-center">
-                            <input
-                                type="checkbox"
-                                id="explodeBase"
-                                checked={explodeBaseIngredients}
-                                onChange={(e) => setExplodeBaseIngredients(e.target.checked)}
-                                disabled={!hasBaseProducts}
-                                className="w-5 h-5 text-orange-600 rounded border-gray-300 focus:ring-orange-500 disabled:cursor-not-allowed"
-                            />
-                            <label htmlFor="explodeBase" className={`ml-2 text-sm font-medium cursor-pointer ${!hasBaseProducts ? 'cursor-not-allowed' : ''}`}>
-                                Listar itens dos produtos base?
-                            </label>
-                        </div>
-                        {hasBaseProducts && <Layers size={16} className="text-orange-500" />}
+                    <div className="space-y-3 mb-4">
+                        <input
+                            type="text"
+                            placeholder="Buscar..."
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                        />
+                        <select
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={selectedSector}
+                            onChange={e => setSelectedSector(e.target.value)}
+                            aria-label="Filtrar por Setor"
+                        >
+                            <option value="all">Todos os Setores</option>
+                            {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
+                        </select>
                     </div>
 
-                    <button
-                        onClick={() => setStep('result')}
-                        className="bg-blue-600 text-white px-8 py-3 rounded-full shadow-lg font-bold flex items-center hover:bg-blue-700 transition-transform transform hover:scale-105"
-                    >
-                        Gerar Lista de Compras
-                        <ArrowRight size={20} className="ml-2" />
-                    </button>
+                    <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                        {filteredRecipes.map(recipe => {
+                            const isSelected = logic.selectedRecipes.some(r => r.recipeId === recipe.id);
+                            return (
+                                <button
+                                    key={recipe.id}
+                                    onClick={() => !isSelected && handleAddRecipe(recipe)}
+                                    disabled={isSelected}
+                                    className={`w-full text-left p-3 rounded-lg border transition-all flex justify-between items-center group ${isSelected
+                                        ? 'bg-blue-50 border-blue-200 opacity-60 cursor-default'
+                                        : 'bg-white border-gray-100 hover:border-blue-300 hover:shadow-md'
+                                        }`}
+                                >
+                                    <div>
+                                        <div className="font-semibold text-gray-800 text-sm group-hover:text-blue-700 transition-colors">{recipe.nome_receita}</div>
+                                        <div className="text-xs text-gray-500">
+                                            {recipe.tipo_produto === 'Base' ? 'Prod. Base' : 'Prod. Final'} • {recipe.rendimento_kg} Kg
+                                        </div>
+                                    </div>
+                                    {isSelected && <CheckSquare size={16} className="text-blue-500" />}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
-            )}
 
-            {/* Spacer for fixed bottom bar */}
-            <div className="h-24"></div>
+                {/* Right: Selected & Simulation */}
+                <div className="lg:col-span-2 space-y-6">
+
+                    {/* Selected List */}
+                    {logic.selectedRecipes.length > 0 ? (
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                            <h3 className="font-bold text-gray-700 mb-4 flex items-center gap-2">
+                                <Calculator size={20} />
+                                Itens a Produzir
+                            </h3>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {logic.selectedRecipes.map(item => {
+                                    const r = recipes.find(x => x.id === item.recipeId);
+                                    if (!r) return null;
+                                    return (
+                                        <div key={item.recipeId} className="flex items-center gap-4 bg-gray-50 p-3 rounded-lg border border-gray-200 hover:border-blue-200 transition-colors">
+                                            <div className="flex-1">
+                                                <div className="font-bold text-gray-800 text-sm">{r.nome_receita}</div>
+                                                <div className={`text-[10px] uppercase font-bold tracking-wide ${r.tipo_produto === 'Base' ? 'text-orange-600' : 'text-green-600'}`}>
+                                                    {r.tipo_produto === 'Base' ? 'Base' : 'Final'}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-2">
+                                                <label className="text-xs font-bold text-gray-500">Kg:</label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.001"
+                                                    className="w-24 px-2 py-1 border border-gray-300 rounded text-center font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
+                                                    value={item.quantity}
+                                                    onChange={e => handleUpdateQuantity(item.recipeId, parseFloat(e.target.value))}
+                                                    aria-label={`Quantidade de ${r.nome_receita} em Kg`}
+                                                />
+                                            </div>
+
+                                            <button
+                                                onClick={() => handleRemoveRecipe(item.recipeId)}
+                                                className="text-red-400 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-red-50"
+                                                title="Remover"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="mt-6 flex flex-col sm:flex-row justify-between items-center gap-4 border-t border-gray-100 pt-4">
+                                {logic.selectedRecipes.some(s => recipes.find(r => r.id === s.recipeId)?.tipo_produto === 'Final') ? (
+                                    <label className="flex items-center gap-2 cursor-pointer select-none group">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                                            checked={logic.explodeBaseProducts}
+                                            onChange={e => logic.setExplodeBaseProducts(e.target.checked)}
+                                        />
+                                        <span className="text-gray-700 font-medium group-hover:text-blue-600 transition-colors">Listar insumos dos produtos base?</span>
+                                    </label>
+                                ) : (
+                                    <div className="flex-1"></div> /* Spacer to keep button on right */
+                                )}
+
+                                <button
+                                    onClick={logic.calculateList}
+                                    className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center gap-2"
+                                >
+                                    Gerar Lista de Compras
+                                    <ArrowRight size={18} />
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg p-12 text-center text-gray-400 flex flex-col items-center gap-2">
+                            <Calculator size={48} className="opacity-20" />
+                            <p>Selecione receitas à esquerda para começar a simulação.</p>
+                        </div>
+                    )}
+
+                    {/* Results */}
+                    {logic.shoppingList.length > 0 && (
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <div className="p-6 bg-gray-50 border-b border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                <div>
+                                    <h3 className="font-bold text-xl text-gray-800 flex items-center gap-2">
+                                        <ShoppingCart className="text-blue-600" />
+                                        Lista de Compras
+                                    </h3>
+                                    <p className="text-sm text-gray-500">Baseado na produção planejada</p>
+                                </div>
+                                <div className="text-right w-full sm:w-auto bg-white p-3 rounded-lg border border-gray-200 shadow-sm">
+                                    <div className="text-xs text-gray-500 font-bold uppercase tracking-wide">Custo Estimado Total</div>
+                                    <div className="text-2xl font-bold text-blue-600">
+                                        {logic.totalCost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-white text-gray-500 uppercase text-xs font-bold border-b border-gray-200">
+                                        <tr>
+                                            <th className="px-6 py-3 bg-gray-50/50">Insumo</th>
+                                            <th className="px-6 py-3 bg-gray-50/50">Fornecedor</th>
+                                            <th className="px-6 py-3 bg-gray-50/50 text-right">Qtd Necessária</th>
+                                            <th className="px-6 py-3 bg-gray-50/50 text-right">Custo Est.</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {logic.shoppingList.sort((a, b) => a.name.localeCompare(b.name)).map(item => (
+                                            <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group">
+                                                <td className="px-6 py-3">
+                                                    <div className="font-bold text-gray-800">{item.name}</div>
+                                                    {item.isBaseProduct && logic.explodeBaseProducts && (
+                                                        <span className="inline-block px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold rounded-full uppercase mt-1">
+                                                            Receita Base
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-6 py-3 text-sm text-gray-500">
+                                                    {item.supplier || '-'}
+                                                </td>
+                                                <td className="px-6 py-3 text-right">
+                                                    <span className="font-mono font-bold text-gray-900 bg-gray-100 px-2 py-0.5 rounded">
+                                                        {item.quantity.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}
+                                                    </span>
+                                                    <span className="text-gray-500 ml-1 text-sm font-medium">{item.unit}</span>
+                                                </td>
+                                                <td className="px-6 py-3 text-right font-medium text-blue-600">
+                                                    {item.cost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="bg-gray-50 p-4 border-t border-gray-200 flex justify-end">
+                                <button
+                                    onClick={handleExport}
+                                    className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-bold shadow-sm hover:shadow-md flex items-center gap-2 active:scale-95 transform duration-100"
+                                >
+                                    <FileText size={18} />
+                                    Exportar Lista em PDF
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
-};
+}

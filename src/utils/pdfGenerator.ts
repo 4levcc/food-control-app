@@ -210,8 +210,6 @@ export const exportRecipePDF = (
 
     // -- OBSERVATIONS --
     if (recipe.observacoes) {
-        // Build a page break check roughly? autoTable handles it, but for text manually...
-        // Let's ensure we have space or add page.
         const pageHeight = doc.internal.pageSize.height;
         if (currentY > pageHeight - 40) {
             doc.addPage();
@@ -247,60 +245,144 @@ export const exportShoppingListPDF = (
     groupedItems?: {
         final: { name: string; quantity: number; unit: string; cost: number; supplier: string }[],
         base: { name: string; quantity: number; unit: string; cost: number; supplier: string }[]
-    }
+    },
+    selectedRecipes?: { name: string; quantity: number }[]
 ) => {
     const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
 
-    // Helper
+    // -- COLORS (Matching exportRecipePDF) --
+    const PRIMARY_COLOR = [23, 37, 84] as [number, number, number]; // #172554
+    const SECONDARY_COLOR = [241, 245, 249] as [number, number, number]; // #f1f5f9
+    const ACCENT_COLOR = [59, 130, 246] as [number, number, number]; // #3b82f6
+    const TEXT_COLOR = [30, 41, 59] as [number, number, number]; // #1e293b
+
     const formatCurrency = (val: number) => {
         return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
     };
 
-    // Header
-    doc.setFontSize(22);
-    doc.setTextColor(40);
-    doc.text('Lista de Compras', 14, 20);
+    // -- HEADER --
+    doc.setFillColor(...PRIMARY_COLOR);
+    doc.rect(0, 0, 210, 40, 'F');
 
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(24);
+    doc.setTextColor(255, 255, 255);
+    doc.text("Lista de Compras", 14, 20);
+
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(`Gerado em: ${new Date().toLocaleDateString()}`, 14, 28);
+    doc.setTextColor(200, 230, 255);
+    doc.text("SIMULADOR DE PRODUÇÃO", 14, 28);
 
-    // Total Cost
-    doc.setFillColor(240, 240, 240);
-    doc.rect(14, 35, pageWidth - 28, 14, 'F'); // Increased height
-    doc.setFontSize(12); // Slightly larger
-    doc.setTextColor(60);
-    doc.text('Custo Estimado Total:', 18, 44);
+    // Add Date
+    const today = new Date().toLocaleDateString('pt-BR');
+    doc.text(`Gerado em: ${today}`, 150, 28);
+
+    let currentY = 50;
+
+    // -- PLANNED PRODUCTION (SELECTED RECIPES) --
+    if (selectedRecipes && selectedRecipes.length > 0) {
+        doc.setFontSize(14);
+        doc.setTextColor(...PRIMARY_COLOR);
+        doc.setFont("helvetica", "bold");
+        doc.text('Produção Planejada', 14, currentY);
+        doc.setLineWidth(0.5);
+        doc.setDrawColor(...ACCENT_COLOR);
+        doc.line(14, currentY + 2, 60, currentY + 2);
+
+        currentY += 10;
+
+        const recipeBody = selectedRecipes.map(r => [
+            r.name,
+            `${r.quantity.toFixed(3)} Kg`
+        ]);
+
+        autoTable(doc, {
+            startY: currentY,
+            head: [['Receita', 'Quantidade Planejada']],
+            body: recipeBody,
+            theme: 'striped',
+            styles: { fontSize: 10, textColor: TEXT_COLOR, cellPadding: 3 },
+            headStyles: {
+                fillColor: PRIMARY_COLOR,
+                textColor: [255, 255, 255],
+                fontStyle: 'bold'
+            },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
+            columnStyles: {
+                1: { halign: 'right', fontStyle: 'bold', cellWidth: 50 }
+            }
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 15;
+    }
+
+    // -- TOTAL COST CARD --
+    // We can simulate the "Basic Info" card style or just a nice summary section
     doc.setFontSize(14);
-    doc.setTextColor(37, 99, 235); // Blue
-    doc.text(formatCurrency(totalCost), pageWidth - 18, 44, { align: 'right' });
+    doc.setTextColor(...PRIMARY_COLOR);
+    doc.setFont("helvetica", "bold");
+    doc.text('Resumo Financeiro', 14, currentY);
+    doc.setLineWidth(0.5);
+    doc.setDrawColor(...ACCENT_COLOR);
+    doc.line(14, currentY + 2, 60, currentY + 2);
 
-    // Table Logic
+    currentY += 10;
+
+    autoTable(doc, {
+        startY: currentY,
+        body: [['Custo Total Estimado', formatCurrency(totalCost)]],
+        theme: 'grid',
+        styles: {
+            fontSize: 12,
+            cellPadding: 4,
+            lineColor: [226, 232, 240],
+            textColor: TEXT_COLOR,
+            fontStyle: 'bold'
+        },
+        columnStyles: {
+            0: { cellWidth: 80, fillColor: SECONDARY_COLOR },
+            1: { cellWidth: 50, halign: 'right', textColor: [22, 163, 74] } // Green text for money
+        },
+        margin: { left: 14 }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 15;
+
+    // -- TABLE RENDERER --
     const renderTable = (data: typeof items, startY: number, title?: string) => {
         if (data.length === 0) return startY;
 
         if (title) {
             doc.setFontSize(14);
-            doc.setTextColor(0);
-            doc.text(title, 14, startY - 5);
+            doc.setTextColor(...PRIMARY_COLOR);
+            doc.setFont("helvetica", "bold");
+            doc.text(title, 14, startY);
+            doc.setLineWidth(0.5);
+            doc.setDrawColor(...ACCENT_COLOR);
+            doc.line(14, startY + 2, title.length * 3.5, startY + 2); // Dynamic underline length approx
+            startY += 10;
         }
 
         const tableBody = data.map(item => [
             item.name,
             item.supplier || '-',
-            `${item.quantity.toFixed(2)} ${item.unit}`,
+            `${item.quantity.toFixed(3)} ${item.unit}`,
             formatCurrency(item.cost)
         ]);
 
         autoTable(doc, {
             startY: startY,
-            head: [['Item', 'Fornecedor', 'Qtd.', 'Estimativa']],
+            head: [['Item', 'Fornecedor', 'Quantidade', 'Custo Est.']],
             body: tableBody,
-            theme: 'grid',
-            headStyles: { fillColor: title?.includes('Base') ? [234, 88, 12] : [37, 99, 235] }, // Orange for Base, Blue for Final
-            styles: { fontSize: 10, cellPadding: 3 },
+            theme: 'striped',
+            styles: { fontSize: 10, textColor: TEXT_COLOR, cellPadding: 3 },
+            headStyles: {
+                fillColor: PRIMARY_COLOR,
+                textColor: [255, 255, 255],
+                fontStyle: 'bold'
+            },
+            alternateRowStyles: { fillColor: [248, 250, 252] },
             columnStyles: {
                 2: { halign: 'right' },
                 3: { halign: 'right', fontStyle: 'bold' }
@@ -311,32 +393,33 @@ export const exportShoppingListPDF = (
         return doc.lastAutoTable.finalY + 15;
     };
 
+
     if (groupedItems) {
-        let currentY = 65;
         if (groupedItems.final.length > 0) {
-            currentY = renderTable(groupedItems.final, currentY, 'Itens de Produtos Finais');
+            currentY = renderTable(groupedItems.final, currentY, 'Insumos de Produtos Finais');
         }
         if (groupedItems.base.length > 0) {
-            renderTable(groupedItems.base, currentY, 'Itens de Receitas Base');
+            currentY = renderTable(groupedItems.base, currentY, 'Insumos de Receitas Base');
         }
     } else {
-        renderTable(items, 60);
+        renderTable(items, currentY, 'Itens Comuns');
     }
 
-    // Footer
-    const pageCount = doc.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
+    // -- FOOTER --
+    const addFooter = () => {
+        const pageCount = (doc as any).internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            const text = "Desenvolvido por INOVARE Gestão Estratégica + Elaine Duarte Consultoria Gastronômica para Benta Brigaderia";
+            const textWidth = doc.getTextWidth(text);
+            const x = (doc.internal.pageSize.width - textWidth) / 2;
+            doc.text(text, x, doc.internal.pageSize.height - 10);
+        }
+    };
 
-        // Line 1: Attribution
-        const attribution = "Desenvolvido por INOVARE Gestão Estratégica + Elaine Duarte Consultoria Gastronômica para Benta Brigaderia";
-        doc.text(attribution, pageWidth / 2, pageHeight - 15, { align: 'center' });
-
-        // Line 2: Brand + Page Number
-        doc.text(`FoodControl - Página ${i} of ${pageCount}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
-    }
+    addFooter();
 
     doc.save(`Lista_de_Compras_${new Date().toISOString().split('T')[0]}.pdf`);
 };

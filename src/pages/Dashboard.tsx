@@ -4,7 +4,7 @@ import type { FichaTecnica, Insumo, FtIngrediente, SetorResponsavel } from '../t
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend
 } from 'recharts';
-import { TrendingUp, AlertCircle, ChefHat, DollarSign, Info } from 'lucide-react';
+import { TrendingUp, AlertCircle, ChefHat, DollarSign } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
     const [recipes, setRecipes] = useState<FichaTecnica[]>([]);

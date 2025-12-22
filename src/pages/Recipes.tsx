@@ -135,7 +135,7 @@ export function Recipes() {
                 cmv_produto_percent: recipeData.cmv_produto_percent || null
             };
 
-            console.log('Sending Sanitized Payload (Recipe):', recipePayload);
+            // console.log('Sending Sanitized Payload (Recipe):', recipePayload);
 
             // 3. Save Recipe
             let savedRecipe: FichaTecnica | null = null;
@@ -151,7 +151,7 @@ export function Recipes() {
             }
 
             if (!recipeId || !savedRecipe) throw new Error('Failed to get recipe ID');
-            console.log('Recipe Saved. ID:', recipeId, 'Type:', savedRecipe.tipo_produto);
+            // console.log('Recipe Saved. ID:', recipeId, 'Type:', savedRecipe.tipo_produto);
 
             // 4. Save Ingredients Relation
             const { error: deleteError } = await supabase.from('ft_ingredientes').delete().eq('ft_id', recipeId);
@@ -170,14 +170,14 @@ export function Recipes() {
             }
 
             // 5. Automation: Base Recipe -> Insumo
-            console.log('Checking Automation for Type:', savedRecipe.tipo_produto);
+            // console.log('Checking Automation for Type:', savedRecipe.tipo_produto);
 
             if (savedRecipe.tipo_produto === 'Base') {
-                console.log('Verificação: PRODUTO BASE. Iniciando Try/Catch para criar Insumo...');
+                // console.log('Verificação: PRODUTO BASE. Iniciando Try/Catch para criar Insumo...');
                 try {
                     // Find or Create 'Insumo de produção própria' category
                     let synthCatId = null;
-                    console.log('Buscando Categoria Sintética...');
+                    // console.log('Buscando Categoria Sintética...');
 
                     const { data: synthCats } = await supabase
                         .from('categorias_sinteticas')
@@ -187,9 +187,9 @@ export function Recipes() {
 
                     if (synthCats) {
                         synthCatId = synthCats.id;
-                        console.log('Categoria encontrada:', synthCatId);
+                        // console.log('Categoria encontrada:', synthCatId);
                     } else {
-                        console.log('Categoria não encontrada. Criando...');
+                        // console.log('Categoria não encontrada. Criando...');
                         const { data: newSynth, error: synthError } = await supabase
                             .from('categorias_sinteticas')
                             .insert({ nome: 'Insumo de produção própria' })
@@ -200,7 +200,7 @@ export function Recipes() {
                             console.error('Erro ao criar Categoria Sintética:', synthError);
                         } else if (newSynth) {
                             synthCatId = newSynth.id;
-                            console.log('Nova Categoria Criada:', synthCatId);
+                            // console.log('Nova Categoria Criada:', synthCatId);
                         }
                     }
 
@@ -224,17 +224,17 @@ export function Recipes() {
                         fator_correcao: 1
                     };
 
-                    console.log('Payload Insumo:', insumoPayload);
+                    // console.log('Payload Insumo:', insumoPayload);
 
                     if (existingInsumo) {
-                        console.log('Atualizando Insumo Existente:', existingInsumo.id);
+                        // console.log('Atualizando Insumo Existente:', existingInsumo.id);
                         await supabase.from('insumos').update(insumoPayload).eq('id', existingInsumo.id);
                     } else {
-                        console.log('Criando Novo Insumo...');
+                        // console.log('Criando Novo Insumo...');
                         await supabase.from('insumos').insert(insumoPayload);
                     }
 
-                    console.log('Insumo processado com sucesso.');
+                    // console.log('Insumo processado com sucesso.');
                     alert('Receita Base salva e Insumo criado/atualizado com sucesso! Redirecionando...');
                     navigate('/insumos');
                     return;
@@ -245,7 +245,7 @@ export function Recipes() {
                     // Don't return, let it fall through or just stay here.
                 }
             } else {
-                console.log('Produto Final. Redirecionando...');
+                // console.log('Produto Final. Redirecionando...');
                 alert('Ficha Técnica de Produto Final salva com sucesso!');
                 navigate('/produtos-finais');
                 return;
@@ -527,8 +527,8 @@ export function Recipes() {
                             <button
                                 onClick={() => setSelectedType('all')}
                                 className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${selectedType === 'all'
-                                        ? 'bg-white text-gray-900 shadow-sm'
-                                        : 'text-gray-500 hover:text-gray-700'
+                                    ? 'bg-white text-gray-900 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-700'
                                     }`}
                             >
                                 Todos
@@ -536,8 +536,8 @@ export function Recipes() {
                             <button
                                 onClick={() => setSelectedType('Base')}
                                 className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${selectedType === 'Base'
-                                        ? 'bg-white text-blue-600 shadow-sm'
-                                        : 'text-gray-500 hover:text-gray-700'
+                                    ? 'bg-white text-blue-600 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-700'
                                     }`}
                             >
                                 Prod. Base
@@ -545,8 +545,8 @@ export function Recipes() {
                             <button
                                 onClick={() => setSelectedType('Final')}
                                 className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${selectedType === 'Final'
-                                        ? 'bg-white text-green-600 shadow-sm'
-                                        : 'text-gray-500 hover:text-gray-700'
+                                    ? 'bg-white text-green-600 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-700'
                                     }`}
                             >
                                 Prod. Final
@@ -558,8 +558,8 @@ export function Recipes() {
                                 onClick={() => setShowDeleteConfirm(true)}
                                 disabled={selectedRecipes.length === 0}
                                 className={`px-3 py-2 rounded-lg flex items-center gap-2 border transition-colors ${selectedRecipes.length > 0
-                                        ? 'border-red-200 text-red-600 hover:bg-red-50'
-                                        : 'border-gray-200 text-gray-300 cursor-not-allowed'
+                                    ? 'border-red-200 text-red-600 hover:bg-red-50'
+                                    : 'border-gray-200 text-gray-300 cursor-not-allowed'
                                     }`}
                                 title="Excluir Selecionados"
                             >

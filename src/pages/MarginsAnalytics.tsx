@@ -331,10 +331,7 @@ export const MarginsAnalytics: React.FC = () => {
 };
 
 // Helper functions (placeholders until lookups fully integrated or fetched)
-function getSectorName(id: string | null) {
-    if (!id) return 'Outros';
-    return 'Geral'; // Simplified
-}
+
 function getSpecialtyName(id: string | null) {
     if (!id) return 'Geral';
     return 'Geral'; // Simplified
