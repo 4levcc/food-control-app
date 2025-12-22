@@ -1,519 +1,551 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, Plus, Trash2, Calculator, Info, DollarSign } from 'lucide-react';
-import { useStore } from '../hooks/useStore';
-import type { Recipe, RecipeItem, Ingredient } from '../types';
-import { generateIngredientCode } from '../utils/codeGenerator';
+import { X, Plus, Trash2, Info, DollarSign, FileText } from 'lucide-react';
+import type { FichaTecnica, FtIngrediente, Insumo, UnidadeMedida, SetorResponsavel, Especialidade, Dificuldade } from '../types';
 
 interface RecipeEditorProps {
     onClose: () => void;
-    initialData?: Recipe | null;
+    onSave: (recipe: Partial<FichaTecnica>, ingredients: Partial<FtIngrediente>[]) => void;
+    initialData?: FichaTecnica;
+    initialIngredients?: FtIngrediente[];
+    insumos: Insumo[];
+    unidades: UnidadeMedida[];
+    setores: SetorResponsavel[];
+    especialidades: Especialidade[];
+    dificuldades: Dificuldade[];
+    generateId: (sectorId: string) => string;
 }
 
-export const RecipeEditor: React.FC<RecipeEditorProps> = ({ onClose, initialData }) => {
-    const { ingredients, recipes, addRecipe, updateRecipe, addIngredient, updateIngredient, settings } = useStore();
+export const RecipeEditor: React.FC<RecipeEditorProps> = ({
+    onClose,
+    onSave,
+    initialData,
+    initialIngredients = [],
+    insumos,
+    unidades,
+    setores,
+    especialidades,
+    dificuldades,
+    generateId
+}) => {
 
-    // Default values
-    const defaultSector = settings.sectors[0] || 'Brigadeiro';
-
-    // State
-    const [formData, setFormData] = useState({
-        name: initialData?.name || '',
-        productType: initialData?.productType || 'Final' as 'Base' | 'Final',
-        sector: (initialData?.sector || defaultSector) as any,
-        specialty: initialData?.specialty || '', // Initialize specialty
-        difficulty: initialData?.difficulty || 'Easy' as const,
-        time: initialData?.time || '',
-        isIngredient: initialData?.isIngredient || false,
-        yieldKg: initialData?.yieldKg?.toString() || '',
+    // Form State
+    const [formData, setFormData] = useState<Partial<FichaTecnica>>({
+        nome_receita: '',
+        tipo_produto: 'Final',
+        setor_responsavel_id: '',
+        especialidade_id: '',
+        dificuldade_id: '',
+        tempo_preparo: '',
+        codigo_id: '',
+        e_insumo: false,
+        rendimento_kg: 0,
+        preco_venda: 0,
+        observacoes: '',
+        cmv_produto_valor: 0,
+        cmv_produto_percent: 0
     });
 
-    // Auto-generated fields
-    const [code, setCode] = useState(initialData?.code || '');
-    const creationDate = initialData ? new Date(initialData.createdAt).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR');
+    const [currentIngredients, setCurrentIngredients] = useState<Partial<FtIngrediente>[]>([]);
 
-    // Ingredients List State
-    const [items, setItems] = useState<RecipeItem[]>(initialData?.items || []);
-    const [selectedIngredientId, setSelectedIngredientId] = useState('');
+    // Ingredient Adder State
+    const [selectedIngId, setSelectedIngId] = useState('');
     const [quantity, setQuantity] = useState('');
+    const [selectedUnitId, setSelectedUnitId] = useState('');
     const [usageHint, setUsageHint] = useState('');
 
-    // Generate Code on Sector Change only if NOT editing or if code is missing
     useEffect(() => {
-        if (initialData?.code) return; // Don't overwrite existing code when editing
+        if (initialData) {
+            setFormData(initialData);
+            setCurrentIngredients(initialIngredients);
+        } else {
+            setFormData({
+                nome_receita: '',
+                tipo_produto: 'Final', // Default to Final, user can change
+                setor_responsavel_id: '',
+                especialidade_id: '',
+                dificuldade_id: '',
+                tempo_preparo: '',
+                codigo_id: '',
+                e_insumo: false,
+                rendimento_kg: 0,
+                preco_venda: 0,
+                observacoes: '',
+                cmv_produto_valor: 0,
+                cmv_produto_percent: 0
+            });
+            setCurrentIngredients([]);
+        }
+    }, [initialData, initialIngredients]);
 
-        const sectorPrefix = formData.sector.substring(0, 3).toUpperCase();
-        const existingCodes = recipes.map(r => r.code || '').filter(Boolean);
+    // Auto-generate ID when sector changes
+    useEffect(() => {
+        if (!initialData && formData.setor_responsavel_id) {
+            const newId = generateId(formData.setor_responsavel_id);
+            setFormData(prev => ({ ...prev, codigo_id: newId }));
+        }
+    }, [formData.setor_responsavel_id, initialData, generateId]);
 
-        const regex = new RegExp(`^${sectorPrefix}-(\\d{4})$`);
-        let maxSeq = 0;
-        existingCodes.forEach(c => {
-            const match = c.match(regex);
-            if (match) maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
-        });
-        setCode(`${sectorPrefix}-${(maxSeq + 1).toString().padStart(4, '0')}`);
-    }, [formData.sector, recipes, initialData]);
+    const handleAddIngredient = () => {
+        if (!selectedIngId || !quantity || !selectedUnitId) return;
 
-    // Handle Add Item
-    const handleAddItem = () => {
-        if (!selectedIngredientId || !quantity) return;
-        setItems(prev => [...prev, {
-            ingredientId: selectedIngredientId,
-            quantity: parseFloat(quantity),
-            usageHint
+        setCurrentIngredients(prev => [...prev, {
+            insumo_id: selectedIngId,
+            quantidade_utilizada: parseFloat(quantity),
+            unidade_utilizada_id: selectedUnitId,
+            dica_uso: usageHint
         }]);
-        setSelectedIngredientId('');
+
+        // Reset inputs
+        setSelectedIngId('');
         setQuantity('');
+        setSelectedUnitId('');
         setUsageHint('');
     };
 
-    const handleRemoveItem = (index: number) => {
-        setItems(prev => prev.filter((_, i) => i !== index));
+    const handleRemoveIngredient = (index: number) => {
+        setCurrentIngredients(prev => prev.filter((_, i) => i !== index));
     };
 
     // Calculations
-    const calculateTotalCost = useMemo(() => {
-        return items.reduce((total, item) => {
-            const ing = ingredients.find(i => i.id === item.ingredientId);
-            const unitCost = (ing?.price || 0) * (ing?.correctionFactor || 1);
-            return total + (unitCost * item.quantity);
-        }, 0);
-    }, [items, ingredients]);
+    const totalCost = useMemo(() => {
+        return currentIngredients.reduce((acc, curr) => {
+            const ing = insumos.find(i => i.id === curr.insumo_id);
+            if (!ing || !ing.custo_compra || !ing.quantidade_compra) return acc;
 
-    const yieldGrams = useMemo(() => {
-        const normalizedYield = formData.yieldKg.replace(',', '.');
-        const kg = parseFloat(normalizedYield) || 0;
-        return kg * 1000;
-    }, [formData.yieldKg]);
+            const cost = ing.custo_compra;
+            const qty = ing.quantidade_compra;
+            const weight = ing.peso_unidade || 1;
+            const factor = ing.fator_correcao || 1;
+
+            const costPerPurchaseUnit = cost / qty;
+            const costPerBaseUnit = weight > 0 ? costPerPurchaseUnit / weight : 0;
+            const realUnitCost = costPerBaseUnit * factor;
+
+            return acc + (realUnitCost * (curr.quantidade_utilizada || 0));
+        }, 0);
+    }, [currentIngredients, insumos]);
+
+    const yieldKg = formData.rendimento_kg || 0;
+    const yieldGrams = yieldKg * 1000;
+
+    // CMV Calculations
+    const cmvPerKg = yieldKg > 0 ? totalCost / yieldKg : 0;
+    const cmvPerGram = cmvPerKg / 1000;
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
-        const recipeData: Recipe = {
-            id: initialData?.id || crypto.randomUUID(),
-            name: formData.name,
-            productType: formData.productType,
-            category: formData.productType, // Legacy compatibility
-            sector: formData.sector,
-            code: code,
-            difficulty: formData.difficulty,
-            time: formData.time,
-            isIngredient: formData.isIngredient,
-            yieldKg: parseFloat(formData.yieldKg.replace(',', '.')) || 0,
-            yieldGrams: yieldGrams,
-            items,
-            createdAt: initialData?.createdAt || new Date().toISOString(),
-            salePrice: initialData?.salePrice, // Preserve existing price if not edited here
-            specialty: formData.productType === 'Final' ? formData.specialty : undefined,
+        // Calculate CMV fields to save
+        const cmvValue = totalCost;
+        const cmvPercent = (formData.preco_venda && formData.preco_venda > 0)
+            ? ((totalCost / formData.preco_venda) * 100)
+            : 0;
+
+        const payload = {
+            ...formData,
+            cmv_produto_valor: cmvValue,
+            cmv_produto_percent: cmvPercent
         };
 
-        if (initialData?.id) {
-            updateRecipe(initialData.id, recipeData);
-        } else {
-            addRecipe(recipeData);
-        }
-
-        // Handle Ingredient Sync (Create or Update)
-        if (formData.isIngredient) {
-            // Calculate common values
-            const ingSynthCat = "Insumo de produção produzido";
-            // Fix parsing: handle comma as decimal separator
-            const normalizedYield = formData.yieldKg.replace(',', '.');
-            const yieldKg = parseFloat(normalizedYield) || 0;
-
-            // Guard against divide by zero if yield is missing
-            if (yieldKg <= 0) {
-                // Should we warn? For now, we proceed but cost/g might be infinity if used elsewhere.
-            }
-
-            // Calculate CMV (Cost per KG)
-            const calculatedCostPerKg = yieldKg > 0 ? calculateTotalCost / yieldKg : 0;
-            const calculatedCostPerGram = calculatedCostPerKg / 1000;
-
-            // Prepare common ingredient payload (Normalized to 1KG Unit)
-            // This ensures Ingredient Form displays the CMV/KG as the "Real Cost"
-            const ingredientPayload: Partial<Ingredient> = {
-                name: formData.name,
-                description: `${formData.name} - Produção interna`,
-                category: formData.sector,
-                syntheticCategory: ingSynthCat,
-                supplier: 'Produção Interna',
-
-                // Normalize: "Purchased" 1 KG at the CMV Price
-                purchaseCost: calculatedCostPerKg,
-                purchaseQuantity: 1,
-                unitWeight: 1000, // 1 Unit = 1000g = 1KG
-                referenceUnit: 'g',
-
-                realCost: calculatedCostPerKg, // Direct match to CMV
-                correctionFactor: 1,
-
-                price: calculatedCostPerGram, // Usage price in other recipes
-                unit: 'g',
-                lastUpdated: new Date().toISOString()
-            };
-
-            if (initialData?.id) {
-                // EDIT MODE: Try to find existing ingredient to update
-                // Use robust matching (trim + lowercase) to find the ingredient
-                const targetName = initialData.name.trim().toLowerCase();
-                const existingIngredient = ingredients.find(i =>
-                    i.name.trim().toLowerCase() === targetName &&
-                    i.syntheticCategory === ingSynthCat
-                );
-
-                if (existingIngredient) {
-                    updateIngredient(existingIngredient.id, ingredientPayload);
-                } else {
-                    // Try finding by current name if initial didn't match (edge case)
-                    const currentName = formData.name.trim().toLowerCase();
-                    const fallbackIngredient = ingredients.find(i =>
-                        i.name.trim().toLowerCase() === currentName &&
-                        i.syntheticCategory === ingSynthCat
-                    );
-
-                    if (fallbackIngredient) {
-                        updateIngredient(fallbackIngredient.id, ingredientPayload);
-                    } else {
-                        // Not found, create new
-                        const existingIngCodes = ingredients.map(i => i.code || '').filter(Boolean);
-                        const ingCode = generateIngredientCode(ingSynthCat, existingIngCodes);
-
-                        addIngredient({
-                            ...ingredientPayload as Ingredient,
-                            id: crypto.randomUUID(),
-                            code: ingCode,
-                        });
-                    }
-                }
-            } else {
-                // CREATE MODE
-                const existingIngCodes = ingredients.map(i => i.code || '').filter(Boolean);
-                const ingCode = generateIngredientCode(ingSynthCat, existingIngCodes);
-
-                addIngredient({
-                    ...ingredientPayload as Ingredient,
-                    id: crypto.randomUUID(),
-                    code: ingCode,
-                });
-            }
-        }
-
-        onClose();
+        onSave(payload, currentIngredients);
     };
+
+    // Date formatting for the form
+    const creationDate = initialData?.data_criacao
+        ? new Date(initialData.data_criacao).toLocaleDateString('pt-BR')
+        : new Date().toLocaleDateString('pt-BR');
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-50">
             <div className="flex min-h-full items-center justify-center p-4">
                 <div className="relative bg-white rounded-xl shadow-xl w-full max-w-4xl my-8">
+                    {/* Header */}
                     <div className="flex justify-between items-center p-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-xl z-10">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                            {initialData?.id ? 'Editar Ficha Técnica' : 'Ficha Técnica de Produção'}
+                        <h3 className="text-xl font-bold text-gray-800">
+                            Ficha Técnica de Produção
                         </h3>
-                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700" title="Fechar">
                             <X size={24} />
                         </button>
                     </div>
 
                     <form onSubmit={handleSubmit} className="p-6 space-y-8">
+
                         {/* 1. Identification */}
                         <div className="space-y-4">
-                            <h4 className="flex items-center text-blue-800 font-semibold bg-blue-50 p-2 rounded">
+                            <h4 className="flex items-center text-blue-700 font-semibold bg-blue-50 p-2 rounded">
                                 <Info size={18} className="mr-2" />
                                 1. Identificação da Receita
                             </h4>
+
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Row 1 */}
                                 <div className="md:col-span-2">
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Receita</label>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Nome da Receita</label>
                                     <input
                                         required
                                         type="text"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                                        value={formData.name}
-                                        onChange={e => setFormData({ ...formData, name: e.target.value })}
+                                        value={formData.nome_receita || ''}
+                                        onChange={e => setFormData({ ...formData, nome_receita: e.target.value })}
+                                        title="Nome da Receita"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Produto</label>
+                                <div className="md:col-span-1">
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Tipo de Produto</label>
                                     <select
+                                        required
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                                        value={formData.productType}
-                                        onChange={e => setFormData({ ...formData, productType: e.target.value as any })}
+                                        value={formData.tipo_produto || ''}
+                                        onChange={e => setFormData({ ...formData, tipo_produto: e.target.value as any })}
+                                        title="Tipo de Produto"
                                     >
                                         <option value="Final">Produto Final</option>
                                         <option value="Base">Produto Base</option>
                                     </select>
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Setor Responsável</label>
-                                    <select
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                                        value={formData.sector}
-                                        onChange={e => setFormData({ ...formData, sector: e.target.value as any })}
-                                    >
-                                        {settings.sectors.map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
-                                </div>
 
-                                {/* Specialty Field - Only for Final Products */}
-                                {formData.productType === 'Final' && (
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Especialidade</label>
-                                        <select
-                                            className="w-full px-3 py-2 border border-blue-300 bg-blue-50 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                                            value={formData.specialty}
-                                            onChange={e => setFormData({ ...formData, specialty: e.target.value })}
-                                        >
-                                            <option value="">Selecione...</option>
-                                            {settings.specialties.map(s => <option key={s} value={s}>{s}</option>)}
-                                        </select>
-                                    </div>
-                                )}
-
+                                {/* Row 2 */}
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-500 mb-1">Código/ID (Auto)</label>
-                                    <input disabled type="text" value={code} className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-gray-500" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-500 mb-1">Data Criação</label>
-                                    <input disabled type="text" value={creationDate} className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-gray-500" />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Dificuldade</label>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Setor Responsável</label>
                                     <select
+                                        required
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                                        value={formData.difficulty}
-                                        onChange={e => setFormData({ ...formData, difficulty: e.target.value as any })}
+                                        value={formData.setor_responsavel_id || ''}
+                                        onChange={e => setFormData({ ...formData, setor_responsavel_id: e.target.value })}
+                                        title="Setor Responsável"
                                     >
-                                        <option value="Easy">Fácil</option>
-                                        <option value="Medium">Médio</option>
-                                        <option value="Hard">Difícil</option>
+                                        <option value="">Selecione...</option>
+                                        {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Tempo de Preparo</label>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Especialidade</label>
+                                    <select
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                                        value={formData.especialidade_id || ''}
+                                        onChange={e => setFormData({ ...formData, especialidade_id: e.target.value })}
+                                        title="Especialidade"
+                                    >
+                                        <option value="">Selecione...</option>
+                                        {especialidades.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Código/ID (Auto)</label>
+                                    <input
+                                        type="text"
+                                        readOnly
+                                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500"
+                                        value={formData.codigo_id || ''}
+                                        title="Código ID"
+                                    />
+                                </div>
+
+                                {/* Row 3 */}
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Data Criação</label>
+                                    <input
+                                        type="text"
+                                        readOnly
+                                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500"
+                                        value={creationDate}
+                                        title="Data de Criação"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Dificuldade</label>
+                                    <select
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                                        value={formData.dificuldade_id || ''}
+                                        onChange={e => setFormData({ ...formData, dificuldade_id: e.target.value })}
+                                        title="Dificuldade"
+                                    >
+                                        <option value="">Selecione...</option>
+                                        {dificuldades.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Tempo de Preparo</label>
                                     <input
                                         type="text"
                                         placeholder="Ex: 45 min"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
-                                        value={formData.time}
-                                        onChange={e => setFormData({ ...formData, time: e.target.value })}
+                                        value={formData.tempo_preparo || ''}
+                                        onChange={e => setFormData({ ...formData, tempo_preparo: e.target.value })}
+                                        title="Tempo de Preparo"
                                     />
-                                </div>
-                                <div className="flex items-center">
-                                    <label className="flex items-center cursor-pointer mt-6">
-                                        <input
-                                            type="checkbox"
-                                            className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 mr-2"
-                                            checked={formData.isIngredient}
-                                            onChange={e => setFormData({ ...formData, isIngredient: e.target.checked })}
-                                        />
-                                        <span className="font-medium text-gray-900">É de um insumo?</span>
-                                    </label>
                                 </div>
                             </div>
                         </div>
 
-                        <hr className="border-gray-100" />
-
-                        {/* 2. Ingredients & Inputs */}
+                        {/* 2. Ingredients */}
                         <div className="space-y-4">
-                            <h4 className="flex items-center text-blue-800 font-semibold bg-blue-50 p-2 rounded">
-                                <Calculator size={18} className="mr-2" />
+                            <h4 className="flex items-center text-blue-700 font-semibold bg-blue-50 p-2 rounded">
+                                <FileText size={18} className="mr-2" />
                                 2. Ingredientes e Insumos
                             </h4>
 
-                            {/* Adder */}
-                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 bg-gray-50 p-3 rounded-lg items-end">
-                                <div className="md:col-span-4">
-                                    <label className="text-xs font-semibold text-gray-500 uppercase">Ingrediente</label>
+                            {/* Adder ROW */}
+                            <div className="flex flex-col md:flex-row gap-2 items-end">
+                                <div className="flex-grow">
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Ingrediente</label>
                                     <select
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none text-sm"
-                                        value={selectedIngredientId}
-                                        onChange={e => setSelectedIngredientId(e.target.value)}
+                                        value={selectedIngId}
+                                        onChange={e => setSelectedIngId(e.target.value)}
+                                        title="Selecione o insumo"
                                     >
                                         <option value="">Selecione...</option>
-                                        {ingredients.map(ing => (
-                                            <option key={ing.id} value={ing.id}>{ing.name}</option>
+                                        {insumos.map(i => (
+                                            <option key={i.id} value={i.id}>{i.nome_padronizado}</option>
                                         ))}
                                     </select>
                                 </div>
-                                <div className="md:col-span-2">
-                                    <label className="text-xs font-semibold text-gray-500 uppercase">Qtd (g/ml/un)</label>
+                                <div className="w-24">
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Qtd (Un)</label>
                                     <input
                                         type="number"
+                                        step="0.001"
+                                        placeholder="0"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none text-sm"
                                         value={quantity}
                                         onChange={e => setQuantity(e.target.value)}
-                                        placeholder="0"
+                                        title="Quantidade"
                                     />
                                 </div>
-                                <div className="md:col-span-5">
-                                    <label className="text-xs font-semibold text-gray-500 uppercase">Dica de uso</label>
+                                <div className="w-24">
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Unidade</label>
+                                    <select
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none text-sm"
+                                        value={selectedUnitId}
+                                        onChange={e => setSelectedUnitId(e.target.value)}
+                                        title="Unidade"
+                                    >
+                                        <option value="">Und</option>
+                                        {unidades
+                                            .filter(u => ['g', 'ml', 'un'].includes(u.sigla.toLowerCase()))
+                                            .map(u => (
+                                                <option key={u.id} value={u.id}>{u.sigla}</option>
+                                            ))}
+                                    </select>
+                                </div>
+                                <div className="flex-grow">
+                                    <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Dica de Uso</label>
                                     <input
                                         type="text"
+                                        placeholder="Opcional"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none text-sm"
                                         value={usageHint}
                                         onChange={e => setUsageHint(e.target.value)}
-                                        placeholder="Opcional"
+                                        title="Dica de Uso"
                                     />
                                 </div>
-                                <div className="md:col-span-1">
-                                    <button
-                                        type="button"
-                                        onClick={handleAddItem}
-                                        className="w-full bg-green-600 text-white p-2 rounded-lg hover:bg-green-700 flex justify-center"
-                                    >
-                                        <Plus size={20} />
-                                    </button>
-                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleAddIngredient}
+                                    className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 transition-colors h-[38px] w-10 flex items-center justify-center"
+                                    title="Adicionar ingrediente"
+                                >
+                                    <Plus size={20} />
+                                </button>
                             </div>
 
                             {/* List */}
-                            <div className="overflow-x-auto">
+                            <div className="border border-gray-100 rounded-lg overflow-hidden">
                                 <table className="w-full text-sm text-left">
-                                    <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                                    <thead className="bg-gray-50 text-gray-600 font-semibold uppercase text-xs">
                                         <tr>
-                                            <th className="px-4 py-2">Ingrediente</th>
-                                            <th className="px-4 py-2">Categoria</th>
-                                            <th className="px-4 py-2">Qtd</th>
-                                            <th className="px-4 py-2">Custo Un (g/ml)</th>
-                                            <th className="px-4 py-2">Custo Total</th>
-                                            <th className="px-4 py-2">Dica</th>
-                                            <th className="px-4 py-2"></th>
+                                            <th className="px-4 py-3">Ingrediente</th>
+                                            <th className="px-4 py-3">Unid</th>
+                                            <th className="px-4 py-3 text-right">Qtd</th>
+                                            <th className="px-4 py-3 text-right">Custo Un (Base)</th>
+                                            <th className="px-4 py-3 text-right">Custo Total</th>
+                                            <th className="px-4 py-3">Dica</th>
+                                            <th className="px-4 py-3 text-right"></th>
                                         </tr>
                                     </thead>
-                                    <tbody>
-                                        {items.map((item, index) => {
-                                            const ing = ingredients.find(i => i.id === item.ingredientId);
-                                            if (!ing) return null;
-                                            const unitCost = (ing.price || 0) * (ing.correctionFactor || 1);
-                                            const totalCost = unitCost * item.quantity;
+                                    <tbody className="divide-y divide-gray-100">
+                                        {currentIngredients.length === 0 && (
+                                            <tr>
+                                                <td colSpan={7} className="px-4 py-8 text-center text-gray-400 italic">
+                                                    Adicione ingredientes acima.
+                                                </td>
+                                            </tr>
+                                        )}
+                                        {currentIngredients.map((item, idx) => {
+                                            const ing = insumos.find(i => i.id === item.insumo_id);
+                                            const ingName = ing?.nome_padronizado || '-';
+                                            const unitName = unidades.find(u => u.id === item.unidade_utilizada_id)?.sigla || '-';
+
+                                            const cost = ing?.custo_compra || 0;
+                                            const qty = ing?.quantidade_compra || 1;
+                                            const weight = ing?.peso_unidade || 1;
+                                            const factor = ing?.fator_correcao || 1;
+
+                                            const costPerPurchaseUnit = qty > 0 ? cost / qty : 0;
+                                            const costPerBaseUnit = weight > 0 ? costPerPurchaseUnit / weight : 0;
+                                            const realUnitCost = costPerBaseUnit * factor;
+
+                                            const subtotal = realUnitCost * (item.quantidade_utilizada || 0);
+
                                             return (
-                                                <tr key={index} className="border-b hover:bg-gray-50">
-                                                    <td className="px-4 py-2 font-medium">{ing.name}</td>
-                                                    <td className="px-4 py-2 text-gray-500">{ing.category}</td>
-                                                    <td className="px-4 py-2">{item.quantity} {ing.unit}</td>
-                                                    <td className="px-4 py-2">R$ {unitCost.toFixed(4)}</td>
-                                                    <td className="px-4 py-2 font-bold">R$ {totalCost.toFixed(2)}</td>
-                                                    <td className="px-4 py-2 text-gray-500 italic max-w-xs truncate">{item.usageHint || '-'}</td>
-                                                    <td className="px-4 py-2 text-right">
-                                                        <button type="button" onClick={() => handleRemoveItem(index)} className="text-red-500 hover:text-red-700">
+                                                <tr key={idx} className="hover:bg-gray-50">
+                                                    <td className="px-4 py-3 font-medium text-gray-800">{ingName}</td>
+                                                    <td className="px-4 py-3 text-gray-500">{unitName}</td>
+                                                    <td className="px-4 py-3 text-right">{item.quantidade_utilizada}</td>
+                                                    <td className="px-4 py-3 text-right text-gray-500">R$ {realUnitCost.toFixed(4)}</td>
+                                                    <td className="px-4 py-3 text-right font-semibold text-gray-800">R$ {subtotal.toFixed(2)}</td>
+                                                    <td className="px-4 py-3 text-gray-500 italic">{item.dica_uso}</td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleRemoveIngredient(idx)}
+                                                            className="text-red-400 hover:text-red-600 transition-colors"
+                                                            title="Remover"
+                                                        >
                                                             <Trash2 size={16} />
                                                         </button>
                                                     </td>
                                                 </tr>
                                             );
                                         })}
-                                        {items.length === 0 && (
-                                            <tr>
-                                                <td colSpan={7} className="text-center py-4 text-gray-400">Adicione ingredientes acima.</td>
-                                            </tr>
-                                        )}
                                     </tbody>
-                                    <tfoot>
-                                        <tr className="bg-blue-50">
-                                            <td colSpan={4} className="px-4 py-2 text-right font-bold text-gray-900">Total Insumos:</td>
-                                            <td className="px-4 py-2 font-bold text-blue-700">R$ {calculateTotalCost.toFixed(2)}</td>
-                                            <td colSpan={2}></td>
-                                        </tr>
-                                    </tfoot>
                                 </table>
+                                <div className="bg-blue-50 p-3 flex justify-between items-center border-t border-blue-100">
+                                    <span className="font-bold text-gray-700 ml-auto mr-4">Total Insumos:</span>
+                                    <span className="font-bold text-blue-700 text-lg">R$ {totalCost.toFixed(2)}</span>
+                                </div>
                             </div>
                         </div>
 
-                        <hr className="border-gray-100" />
-
                         {/* 3. Yield */}
                         <div className="space-y-4">
-                            <h4 className="flex items-center text-blue-800 font-semibold bg-blue-50 p-2 rounded">
+                            <h4 className="flex items-center text-blue-700 font-semibold bg-blue-50 p-2 rounded">
                                 <Info size={18} className="mr-2" />
                                 3. Rendimento da Receita
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-4 rounded-lg">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Rendimento Total (em KG)</label>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Rendimento Total (em KG)</label>
                                     <input
                                         type="number"
                                         step="0.001"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 text-lg"
-                                        value={formData.yieldKg}
-                                        onChange={e => setFormData({ ...formData, yieldKg: e.target.value })}
+                                        min="0"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                        value={formData.rendimento_kg || ''}
+                                        onChange={e => setFormData({ ...formData, rendimento_kg: parseFloat(e.target.value) })}
                                         placeholder="0.000"
+                                        title="Rendimento em KG"
                                     />
                                     <p className="text-xs text-gray-500 mt-1">Peso final sem embalagens. Se pesou em gramas, divida por 1000.</p>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Rendimento Total (em Gramas)</label>
-                                    <input disabled type="text" value={yieldGrams.toFixed(0)} className="w-full px-3 py-2 bg-gray-200 border border-gray-300 rounded-lg text-gray-600 text-lg font-bold" />
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Rendimento Total (em Gramas)</label>
+                                    <div className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-bold">
+                                        {yieldGrams.toFixed(0)}
+                                    </div>
                                     <p className="text-xs text-gray-500 mt-1">Cálculo automático: KG x 1000</p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* 4. Nutrition (Placeholder) */}
-                        <div className="space-y-4 opacity-50">
-                            <h4 className="flex items-center text-gray-500 font-semibold bg-gray-100 p-2 rounded">
-                                4. Informação Nutricional (Em Breve)
-                            </h4>
-                            <p className="text-sm text-gray-400 italic">Cálculo automático de valor energético será implementado.</p>
+                        {/* 4. Nutritional Info (Placeholder) */}
+                        <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
+                            <h4 className="font-bold text-gray-400 uppercase text-sm mb-2">4. Informação Nutricional (Em Breve)</h4>
+                            <p className="text-xs text-gray-400 italic">Cálculo automático de valor energético será implementado.</p>
                         </div>
 
-                        <hr className="border-gray-100" />
-
-                        {/* 5. Custo de Mercadoria Vendida (CMV) */}
+                        {/* 5. CMV Dashboard */}
                         <div className="space-y-4">
-                            <h4 className="flex items-center text-blue-800 font-semibold bg-blue-50 p-2 rounded">
+                            <h4 className="flex items-center text-blue-700 font-semibold bg-blue-50 p-2 rounded">
                                 <DollarSign size={18} className="mr-2" />
                                 5. Custo de Mercadoria Vendida
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-green-50 p-4 rounded-lg border border-green-100">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Custo Total da Receita</label>
-                                    <div className="text-lg font-bold text-gray-900">
-                                        R$ {calculateTotalCost.toFixed(2)}
+
+                            <div className="bg-green-50 rounded-xl border border-green-100 p-6">
+                                <div className="grid grid-cols-2 gap-8 mb-6 border-b border-green-200 pb-6">
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-600 mb-1">Custo Total da Receita</p>
+                                        <p className="text-2xl font-bold text-gray-800">R$ {totalCost.toFixed(2)}</p>
+                                        <p className="text-xs text-gray-500">Soma dos insumos</p>
                                     </div>
-                                    <p className="text-xs text-gray-500">Soma dos insumos</p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Rendimento Total</label>
-                                    <div className="text-lg font-bold text-gray-900">
-                                        {formData.yieldKg ? parseFloat(formData.yieldKg).toFixed(3) : '0.000'} kg
+                                    <div>
+                                        <p className="text-sm font-semibold text-gray-600 mb-1">Rendimento Total</p>
+                                        <p className="text-2xl font-bold text-gray-800">{yieldKg.toFixed(3)} kg</p>
+                                        <p className="text-xs text-gray-500">Peso final</p>
                                     </div>
-                                    <p className="text-xs text-gray-500">Peso final</p>
                                 </div>
 
-                                <div className="md:col-span-2 border-t border-green-200 my-2"></div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-green-800 mb-1">CMV (por KG)</label>
-                                    <div className="text-2xl font-bold text-green-700">
-                                        R$ {(() => {
-                                            const yieldVal = parseFloat(formData.yieldKg) || 0;
-                                            return yieldVal > 0 ? (calculateTotalCost / yieldVal).toFixed(2) : '0.00';
-                                        })()}
+                                <div className="grid grid-cols-2 gap-8">
+                                    <div>
+                                        <p className="text-sm font-bold text-green-800 mb-1">CMV (por KG)</p>
+                                        <p className="text-3xl font-bold text-green-600">R$ {cmvPerKg.toFixed(2)}</p>
+                                        <p className="text-xs text-green-700 font-medium">Custo Total ÷ Rendimento Kg</p>
                                     </div>
-                                    <p className="text-xs text-green-600">Custo Total ÷ Rendimento Kg</p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-green-800 mb-1">CMV (por Grama)</label>
-                                    <div className="text-xl font-bold text-green-700">
-                                        R$ {(() => {
-                                            const yieldVal = parseFloat(formData.yieldKg) || 0;
-                                            const costPerKg = yieldVal > 0 ? (calculateTotalCost / yieldVal) : 0;
-                                            return (costPerKg / 1000).toFixed(4);
-                                        })()}
+                                    <div>
+                                        <p className="text-sm font-bold text-green-800 mb-1">CMV (por Grama)</p>
+                                        <p className="text-3xl font-bold text-green-600">R$ {cmvPerGram.toFixed(4)}</p>
+                                        <p className="text-xs text-green-700 font-medium">CMV Kg ÷ 1000</p>
                                     </div>
-                                    <p className="text-xs text-green-600">CMV Kg ÷ 1000</p>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="pt-4 border-t border-gray-200">
+                        {/* 6. Sales Price (Only for Final Products) */}
+                        {formData.tipo_produto === 'Final' && (
+                            <div className="space-y-4">
+                                <h4 className="flex items-center text-blue-700 font-semibold bg-blue-50 p-2 rounded">
+                                    <DollarSign size={18} className="mr-2" />
+                                    6. Preço de Venda
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-600 mb-1">Preço de Venda Sugerido</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">R$</span>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                                value={formData.preco_venda || ''}
+                                                onChange={e => setFormData({ ...formData, preco_venda: parseFloat(e.target.value) })}
+                                                placeholder="0.00"
+                                                title="Preço de Venda"
+                                            />
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-1">Este valor será exibido na página de Produtos Finais.</p>
+                                    </div>
+
+                                    {/* CMV Calculations */}
+                                    <div className="bg-green-50 p-4 rounded-lg space-y-3">
+                                        <div>
+                                            <p className="text-sm font-bold text-green-800 mb-1">CMV R$ (do produto)</p>
+                                            <p className="text-2xl font-bold text-green-600">R$ {totalCost.toFixed(2)}</p>
+                                            <p className="text-xs text-green-700 font-medium">Custo Total da Receita</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-sm font-bold text-green-800 mb-1">CMV % (do produto)</p>
+                                            <p className="text-2xl font-bold text-green-600">
+                                                {formData.preco_venda && formData.preco_venda > 0
+                                                    ? ((totalCost / formData.preco_venda) * 100).toFixed(2)
+                                                    : '0.00'}%
+                                            </p>
+                                            <p className="text-xs text-green-700 font-medium">Custo Total ÷ Preço Venda</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Footer Actions */}
+                        <div className="pt-4 border-t border-gray-200 sticky bottom-0 bg-white p-4 -mx-6 -mb-6 mt-8 shadow-inner">
                             <button
                                 type="submit"
-                                className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors shadow-lg"
+                                className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold text-lg hover:bg-blue-700 transition-colors shadow-lg flex items-center justify-center gap-2"
                             >
-                                Salvar Ficha Técnica {formData.isIngredient && '& Gerar Insumo'}
+                                {formData.tipo_produto === 'Base' ? 'Salvar Ficha Técnica & Gerar Insumo' : 'Salvar Ficha Técnica'}
                             </button>
                         </div>
                     </form>

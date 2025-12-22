@@ -1,36 +1,84 @@
-import React, { useMemo } from 'react';
-import { useStore } from '../hooks/useStore';
+import React, { useMemo, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import type { FichaTecnica, Insumo, FtIngrediente, SetorResponsavel } from '../types';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import { TrendingUp, TrendingDown, AlertCircle, Award } from 'lucide-react';
 
 export const MarginsAnalytics: React.FC = () => {
-    const { recipes, ingredients } = useStore();
+    const [recipes, setRecipes] = useState<FichaTecnica[]>([]);
+    const [ingredients, setIngredients] = useState<Insumo[]>([]);
+    const [ftIngredients, setFtIngredients] = useState<FtIngrediente[]>([]);
+    const [sectors, setSectors] = useState<SetorResponsavel[]>([]);
+    const [selectedSector, setSelectedSector] = useState('all');
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const [recipesRes, ingRes, ftIngRes, sectorsRes] = await Promise.all([
+                supabase.from('fichas_tecnicas').select('*'),
+                supabase.from('insumos').select('*'),
+                supabase.from('ft_ingredientes').select('*'),
+                supabase.from('setores_responsaveis').select('*').order('nome')
+            ]);
+
+            if (recipesRes.data) setRecipes(recipesRes.data);
+            if (ingRes.data) setIngredients(ingRes.data);
+            if (ftIngRes.data) setFtIngredients(ftIngRes.data);
+            if (sectorsRes.data) setSectors(sectorsRes.data);
+        } catch (error) {
+            console.error('Error fetching analytics data:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // 1. Process Data
     const analyticsData = useMemo(() => {
         return recipes
-            .filter(r => r.productType === 'Final')
+            .filter(r => r.tipo_produto === 'Final')
             .map(rec => {
                 // Calculate Total Cost (CMV)
-                const totalCost = rec.items.reduce((sum, item) => {
-                    const ing = ingredients.find(i => i.id === item.ingredientId);
-                    if (!ing) return sum;
-                    const unitCost = ing.price * (ing.correctionFactor || 1);
-                    return sum + (unitCost * item.quantity);
-                }, 0);
+                let totalCost = rec.cmv_produto_valor;
 
-                const salePrice = rec.salePrice || 0;
+                if (totalCost === null || totalCost === undefined) {
+                    const recIngredients = ftIngredients.filter(ft => ft.ft_id === rec.id);
+                    totalCost = recIngredients.reduce((sum, item) => {
+                        const ing = ingredients.find(i => i.id === item.insumo_id);
+                        if (!ing) return sum;
+
+                        const cost = ing.custo_compra || 0;
+                        const qty = ing.quantidade_compra || 1;
+                        const weight = ing.peso_unidade || 1;
+                        const factor = ing.fator_correcao || 1;
+
+                        const costPerPurchaseUnit = qty > 0 ? cost / qty : 0;
+                        const costPerBaseUnit = weight > 0 ? costPerPurchaseUnit / weight : 0;
+                        const realUnitCost = costPerBaseUnit * factor;
+
+                        return sum + (realUnitCost * item.quantidade_utilizada);
+                    }, 0);
+                }
+
+                const salePrice = rec.preco_venda || 0;
                 const grossMargin = salePrice - totalCost;
                 const marginPercentage = salePrice > 0 ? (grossMargin / salePrice) * 100 : 0;
                 const cmvPercentage = salePrice > 0 ? (totalCost / salePrice) * 100 : 0;
 
+                const sectorName = sectors.find(s => s.id === rec.setor_responsavel_id)?.nome || 'Outros';
+
                 return {
                     id: rec.id,
-                    name: rec.name,
-                    sector: rec.sector,
-                    specialty: rec.specialty || 'Geral',
+                    name: rec.nome_receita,
+                    sector: sectorName,
+                    sectorId: rec.setor_responsavel_id, // Keep ID for filtering
+                    specialty: getSpecialtyName(rec.especialidade_id),
                     totalCost,
                     salePrice,
                     grossMargin,
@@ -42,21 +90,35 @@ export const MarginsAnalytics: React.FC = () => {
             })
             .filter(item => item.hasPrice) // Only analyze items with a price set
             .sort((a, b) => b.marginPercentage - a.marginPercentage);
-    }, [recipes, ingredients]);
+    }, [recipes, ingredients, ftIngredients, sectors]);
+
+    const filteredData = useMemo(() => {
+        if (selectedSector === 'all') return analyticsData;
+        return analyticsData.filter(d => d.sectorId === selectedSector);
+    }, [analyticsData, selectedSector]);
+
+    const availableSectors = useMemo(() => {
+        const uniqueSectorIds = Array.from(new Set(analyticsData.map(d => d.sectorId).filter(Boolean)));
+        return sectors.filter(s => uniqueSectorIds.includes(s.id));
+    }, [analyticsData, sectors]);
 
     // 2. High Level KPIs
     const kpis = useMemo(() => {
-        if (analyticsData.length === 0) return null;
+        if (filteredData.length === 0) return null;
 
-        const totalItems = analyticsData.length;
-        const avgMarginPct = analyticsData.reduce((acc, curr) => acc + curr.marginPercentage, 0) / totalItems;
-        const avgCmvPct = analyticsData.reduce((acc, curr) => acc + curr.cmvPercentage, 0) / totalItems;
+        const totalItems = filteredData.length;
+        const avgMarginPct = filteredData.reduce((acc, curr) => acc + curr.marginPercentage, 0) / totalItems;
+        const avgCmvPct = filteredData.reduce((acc, curr) => acc + curr.cmvPercentage, 0) / totalItems;
 
-        const lowMarginCount = analyticsData.filter(d => d.marginPercentage < 30).length; // < 30% margin alert
-        const highCmvCount = analyticsData.filter(d => d.cmvPercentage > 40).length; // > 40% cost alert
+        const lowMarginCount = filteredData.filter(d => d.marginPercentage < 30).length; // < 30% margin alert
+        const highCmvCount = filteredData.filter(d => d.cmvPercentage > 40).length; // > 40% cost alert
 
         return { avgMarginPct, avgCmvPct, lowMarginCount, highCmvCount };
-    }, [analyticsData]);
+    }, [filteredData]);
+
+    if (loading) {
+        return <div className="p-8 text-center text-gray-500">Carregando análise...</div>;
+    }
 
     if (analyticsData.length === 0) {
         return (
@@ -72,11 +134,40 @@ export const MarginsAnalytics: React.FC = () => {
     }
 
     return (
-        <div className="space-y-8">
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center">
-                <TrendingUp className="mr-3 text-blue-600" />
-                Análise de Margens & Lucratividade
-            </h2>
+        <div className="space-y-8 animate-fade-in">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+                    <TrendingUp className="mr-3 text-blue-600" />
+                    Análise de Margens & Lucratividade
+                </h2>
+
+                {/* Sector Filter Tabs */}
+                {availableSectors.length > 0 && (
+                    <div className="bg-gray-100 p-1 rounded-lg flex items-center gap-1 overflow-x-auto max-w-full">
+                        <button
+                            onClick={() => setSelectedSector('all')}
+                            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all whitespace-nowrap ${selectedSector === 'all'
+                                ? 'bg-white text-blue-600 shadow-sm'
+                                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+                                }`}
+                        >
+                            Todos
+                        </button>
+                        {availableSectors.map(sector => (
+                            <button
+                                key={sector.id}
+                                onClick={() => setSelectedSector(sector.id)}
+                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all whitespace-nowrap ${selectedSector === sector.id
+                                    ? 'bg-white text-blue-600 shadow-sm'
+                                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200'
+                                    }`}
+                            >
+                                {sector.nome}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
 
             {/* KPI Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -106,7 +197,7 @@ export const MarginsAnalytics: React.FC = () => {
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center">
                     <span className="text-sm text-gray-500 uppercase font-semibold">Produtos Analisados</span>
                     <span className="text-3xl font-bold mt-2 text-gray-900">
-                        {analyticsData.length}
+                        {filteredData.length}
                     </span>
                     <span className="text-xs text-gray-400 mt-1">Total com preço definido</span>
                 </div>
@@ -123,7 +214,7 @@ export const MarginsAnalytics: React.FC = () => {
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
-                                data={analyticsData.slice(0, 5)}
+                                data={filteredData.slice(0, 5)}
                                 layout="vertical"
                                 margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
                             >
@@ -146,7 +237,7 @@ export const MarginsAnalytics: React.FC = () => {
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
-                                data={[...analyticsData].reverse().slice(0, 5)}
+                                data={[...filteredData].reverse().slice(0, 5)}
                                 layout="vertical"
                                 margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
                             >
@@ -181,7 +272,7 @@ export const MarginsAnalytics: React.FC = () => {
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {analyticsData.map((item) => (
+                            {filteredData.map((item) => (
                                 <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                         {item.name}
@@ -234,9 +325,17 @@ export const MarginsAnalytics: React.FC = () => {
                 </div>
             </div>
 
-            <div className="bg-blue-50 border border-blue-100 p-4 rounded-lg text-sm text-blue-800">
-                <strong>Nota:</strong> Produtos sem "Preço de Venda" definido não são exibidos nesta análise. Vá para "Produtos Finais" para definir os preços.
-            </div>
+
         </div>
     );
 };
+
+// Helper functions (placeholders until lookups fully integrated or fetched)
+function getSectorName(id: string | null) {
+    if (!id) return 'Outros';
+    return 'Geral'; // Simplified
+}
+function getSpecialtyName(id: string | null) {
+    if (!id) return 'Geral';
+    return 'Geral'; // Simplified
+}

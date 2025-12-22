@@ -1,52 +1,40 @@
+export * from './supabase';
+
+import type { Database } from './supabase';
+
+// Helper types for easier use
+export type Insumo = Database['public']['Tables']['insumos']['Row'];
+export type FichaTecnica = Database['public']['Tables']['fichas_tecnicas']['Row'];
+export type FtIngrediente = Database['public']['Tables']['ft_ingredientes']['Row'];
+
+export type CategoriaInsumo = Database['public']['Tables']['categorias_insumos']['Row'];
+export type CategoriaSintetica = Database['public']['Tables']['categorias_sinteticas']['Row'];
+export type UnidadeMedida = Database['public']['Tables']['unidades_medida']['Row'];
+export type SetorResponsavel = Database['public']['Tables']['setores_responsaveis']['Row'];
+export type Especialidade = Database['public']['Tables']['especialidades']['Row'];
+export type Dificuldade = Database['public']['Tables']['dificuldades']['Row'];
+
+// KEEPING OLD TYPES FOR BACKWARD COMPATIBILITY WHERE NEEDED
+// If existing legacy components break, we might need to re-add 'Ingredient' etc. but mapped to Insumo.
+// Given strict instructions to update IngredientForm/Ingredients.tsx, we focus on the new types.
+
 export interface Ingredient {
     id: string;
-    code?: string; // Auto-generated code (e.g., LAT-0001)
-    description: string; // Produto - Descrição (Benta)
+    code?: string;
+    description: string;
     category: string;
-    syntheticCategory: string; // Categoria Sintética
-    purchaseCost: number; // Custo Compra (R$)
-    purchaseQuantity: number; // Qtd. De Unidades Compradas
-    unitWeight: number; // Peso da unidade (g/ml)
-    referenceUnit: 'g' | 'ml'; // Un. Referência
-    realCost: number; // Custo Real (R$)
-    correctionFactor: number; // Fator Correção
-
-    // Legacy fields mapped or kept for compatibility/display
-    name: string; // Nome Padronizado - FT
-    price: number; // This will likely map to Cost per Ref Unit or Real Cost depending on usage in recipes
-    unit: string; // Kept for display, likely same as referenceUnit
+    syntheticCategory: string;
+    purchaseCost: number;
+    purchaseQuantity: number;
+    unitWeight: number;
+    referenceUnit: 'g' | 'ml';
+    realCost: number;
+    correctionFactor: number;
+    name: string;
+    price: number;
+    unit: string;
     supplier: string;
     lastUpdated: string;
-}
-
-export interface RecipeItem {
-    ingredientId: string;
-    quantity: number; // in the same unit as the ingredient
-    usageHint?: string;
-}
-
-export interface Recipe {
-    id: string;
-    name: string;
-    category: string; // 'Base' or 'Final' -> Refined to 'productType' in UI but keeping field for compatibility or updating
-    productType: 'Base' | 'Final';
-    sector: 'Brigadeiro' | 'Chocolate' | 'Bolos' | 'Artes e Decoração' | 'Outros';
-    code?: string;
-    isIngredient: boolean;
-    yieldKg: number;
-    yieldGrams: number;
-    difficulty: 'Easy' | 'Medium' | 'Hard';
-    time: string; // e.g., '45 min'
-    items: RecipeItem[];
-    createdAt: string;
-    salePrice?: number; // Preço de Venda
-    specialty?: string; // Especialidade (Only for Final Products)
-}
-
-export interface RecipeItem {
-    ingredientId: string;
-    quantity: number; // in the same unit as the ingredient
-    usageHint?: string; // Dica de uso
 }
 
 export interface Supplier {
@@ -54,3 +42,28 @@ export interface Supplier {
     name: string;
     contact?: string;
 }
+
+export interface RecipeItem {
+    ingredientId: string;
+    quantity: number;
+    usageHint?: string;
+}
+
+export interface Recipe {
+    id: string;
+    name: string;
+    category: string;
+    productType: 'Base' | 'Final';
+    sector: 'Brigadeiro' | 'Chocolate' | 'Bolos' | 'Artes e Decoração' | 'Outros';
+    code?: string;
+    isIngredient: boolean;
+    yieldKg: number;
+    yieldGrams: number;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    time: string;
+    items: RecipeItem[];
+    createdAt: string;
+    salePrice?: number;
+    specialty?: string;
+}
+

@@ -1,147 +1,244 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Recipe, Ingredient } from '../types';
+import type { FichaTecnica, Insumo, FtIngrediente, UnidadeMedida } from '../types';
+
+interface ExportData {
+    recipe: FichaTecnica;
+    ingredients: FtIngrediente[];
+    insumos: Insumo[];
+    unidades: UnidadeMedida[];
+    sectorName: string;
+    difficultyName: string;
+}
 
 export const exportRecipePDF = (
-    recipe: Recipe,
-    ingredients: Ingredient[],
-    mode: 'full' | 'production'
+    data: ExportData,
+    mode: 'managerial' | 'production'
 ) => {
+    const { recipe, ingredients, insumos, unidades, sectorName, difficultyName } = data;
     const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
+    const isManagerial = mode === 'managerial';
 
-    // --- Helper Functions ---
-    const formatCurrency = (val: number) => {
-        return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    // -- COLORS --
+    const PRIMARY_COLOR = [23, 37, 84] as [number, number, number]; // #172554 (Blue 950)
+    const SECONDARY_COLOR = [241, 245, 249] as [number, number, number]; // #f1f5f9 (Slate 100)
+    const ACCENT_COLOR = [59, 130, 246] as [number, number, number]; // #3b82f6 (Blue 500)
+    const TEXT_COLOR = [30, 41, 59] as [number, number, number]; // #1e293b (Slate 800)
+
+    // Helper for footer
+    const addFooter = () => {
+        const pageCount = (doc as any).internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            const text = "Desenvolvido por INOVARE Gestão Estratégica + Elaine Duarte Consultoria Gastronômica para Benta Brigaderia";
+            const textWidth = doc.getTextWidth(text);
+            const x = (doc.internal.pageSize.width - textWidth) / 2;
+            doc.text(text, x, doc.internal.pageSize.height - 10);
+        }
     };
 
-    // --- Header ---
-    doc.setFontSize(22);
-    doc.setTextColor(40);
-    doc.text(recipe.name, 14, 20);
+    // -- HEADER --
+    doc.setFillColor(...PRIMARY_COLOR);
+    doc.rect(0, 0, 210, 40, 'F');
 
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(24);
+    doc.setTextColor(255, 255, 255);
+    doc.text(recipe.nome_receita, 14, 20);
+
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
-    doc.setTextColor(100);
-    doc.text(`Código: ${recipe.code || 'N/A'}`, 14, 28);
-    doc.text(`Setor: ${recipe.sector}`, 14, 33);
+    doc.setTextColor(200, 230, 255);
+    doc.text(mode === 'managerial' ? 'RELATÓRIO GERENCIAL' : 'FICHA DE PRODUÇÃO', 14, 28);
 
-    // Header Right Side
-    doc.setFontSize(10);
-    doc.text(`Preparo: ${recipe.time}`, pageWidth - 14, 28, { align: 'right' });
-    doc.text(`Dificuldade: ${recipe.difficulty}`, pageWidth - 14, 33, { align: 'right' });
+    // Add Date
+    const today = new Date().toLocaleDateString('pt-BR');
+    doc.text(`Gerado em: ${today}`, 150, 28);
 
-    // --- Yield Section ---
-    doc.setFillColor(240, 240, 240);
-    doc.rect(14, 40, pageWidth - 28, 12, 'F');
-    doc.setFontSize(10);
-    doc.setTextColor(60);
-    doc.text('Rendimento Final:', 18, 47);
-    doc.setFontSize(12);
-    doc.setTextColor(0);
-    doc.text(`${recipe.yieldKg} kg / ${(recipe.yieldKg * 1000).toFixed(0)} g`, 50, 47.5);
 
-    // --- Ingredients Table ---
-    let tableBody = recipe.items.map(item => {
-        const ing = ingredients.find(i => i.id === item.ingredientId);
-        if (!ing) return [];
+    // -- BASIC INFO --
+    const startY = 50;
+    const yieldKg = recipe.rendimento_kg || 0;
+    const yieldG = yieldKg * 1000;
 
-        const unitCost = (ing.price || 0) * (ing.correctionFactor || 1);
-        const totalCost = unitCost * item.quantity;
-
-        let row = [
-            ing.name,
-            `${item.quantity} ${ing.unit}`, // Quantity + Unit
-            item.usageHint || '-'
-        ];
-
-        if (mode === 'full') {
-            row.push(formatCurrency(unitCost));
-            row.push(formatCurrency(totalCost));
-        }
-
-        return row;
-    });
-
-    // Define Columns
-    let head = [['Ingrediente', 'Quantidade', 'Observação']];
-    if (mode === 'full') {
-        head[0].push('Custo Unit.', 'Custo Total');
-    }
+    const infoData = [
+        ['Código ID', recipe.codigo_id || '-'],
+        ['Setor', sectorName],
+        ['Rendimento', `${yieldKg.toFixed(3)} Kg  (${yieldG.toFixed(0)} g)`], // Added Grams
+        ['Tempo de Preparo', recipe.tempo_preparo || '-'],
+        ['Dificuldade', difficultyName],
+    ];
 
     autoTable(doc, {
-        startY: 60,
-        head: head,
-        body: tableBody,
+        startY: startY,
+        body: infoData,
         theme: 'grid',
-        headStyles: { fillColor: [37, 99, 235] }, // Blue-600
-        styles: { fontSize: 9, cellPadding: 3 },
-        columnStyles: mode === 'full' ? {
-            0: { cellWidth: 'auto' },
-            3: { halign: 'right' },
-            4: { halign: 'right', fontStyle: 'bold' }
-        } : {}
+        styles: {
+            fontSize: 10,
+            cellPadding: 3,
+            lineColor: [226, 232, 240],
+            textColor: TEXT_COLOR
+        },
+        columnStyles: {
+            0: { fontStyle: 'bold', cellWidth: 50, fillColor: SECONDARY_COLOR },
+            1: { cellWidth: 100 }
+        },
+        margin: { left: 14 }
     });
 
-    // --- Financials (Full Mode Only) ---
-    // @ts-ignore
-    const finalY = doc.lastAutoTable.finalY + 10;
+    let currentY = (doc as any).lastAutoTable.finalY + 15;
 
-    if (mode === 'full') {
-        // Calculate Totals
-        const totalCost = recipe.items.reduce((sum, item) => {
-            const ing = ingredients.find(i => i.id === item.ingredientId);
-            const unitCost = (ing?.price || 0) * (ing?.correctionFactor || 1);
-            return sum + (unitCost * item.quantity);
-        }, 0);
+    // -- INGREDIENTS --
+    doc.setFontSize(14);
+    doc.setTextColor(...PRIMARY_COLOR);
+    doc.setFont("helvetica", "bold");
+    doc.text('Ingredientes', 14, currentY);
 
-        const yieldKg = recipe.yieldKg || 1;
-        const cmvKg = totalCost / yieldKg;
-        const cmvUnit = cmvKg / 1000; // per gram
+    // Underline
+    doc.setLineWidth(0.5);
+    doc.setDrawColor(...ACCENT_COLOR);
+    doc.line(14, currentY + 2, 45, currentY + 2);
 
+    currentY += 10;
+
+    const tableHeaders = isManagerial
+        ? ['Ingrediente', 'Qtd', 'Unid', 'Custo Unit.', 'Custo Total']
+        : ['Ingrediente', 'Quantidade', 'Unidade', 'Observação'];
+
+    const tableBody = ingredients.map(ing => {
+        const insumo = insumos.find(i => i.id === ing.insumo_id);
+        const unidade = unidades.find(u => u.id === ing.unidade_utilizada_id);
+
+        let costUnit = 0;
+        let costTotal = 0;
+
+        if (isManagerial && insumo) {
+            const cost = insumo.custo_compra || 0;
+            const qty = insumo.quantidade_compra || 1;
+            const weight = insumo.peso_unidade || 1;
+            const factor = insumo.fator_correcao || 1;
+
+            const costPerPurchaseUnit = qty > 0 ? cost / qty : 0;
+            const costPerBaseUnit = weight > 0 ? costPerPurchaseUnit / weight : 0;
+            const realUnitCost = costPerBaseUnit * factor;
+
+            costUnit = realUnitCost;
+            costTotal = realUnitCost * (ing.quantidade_utilizada || 0);
+        }
+
+        if (isManagerial) {
+            return [
+                insumo?.nome_padronizado || 'Desconhecido',
+                ing.quantidade_utilizada?.toString() || '0',
+                unidade?.sigla || '-',
+                `R$ ${costUnit.toFixed(4)}`,
+                `R$ ${costTotal.toFixed(2)}`
+            ];
+        } else {
+            return [
+                insumo?.nome_padronizado || 'Desconhecido',
+                ing.quantidade_utilizada?.toString() || '0',
+                unidade?.sigla || '-',
+                ing.dica_uso || ''
+            ];
+        }
+    });
+
+    autoTable(doc, {
+        startY: currentY,
+        head: [tableHeaders],
+        body: tableBody,
+        theme: 'striped',
+        styles: { fontSize: 10, textColor: TEXT_COLOR },
+        headStyles: {
+            fillColor: PRIMARY_COLOR,
+            textColor: [255, 255, 255],
+            fontStyle: 'bold'
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        columnStyles: isManagerial
+            ? { 0: { cellWidth: 'auto' }, 4: { halign: 'right' } }
+            : { 0: { cellWidth: 'auto' } }
+    });
+
+    currentY = (doc as any).lastAutoTable.finalY + 15;
+
+    // -- FINANCIAL SUMMARY (Managerial Only) --
+    if (isManagerial) {
         doc.setFontSize(14);
-        doc.setTextColor(0);
-        doc.text('Análise Financeira', 14, finalY);
+        doc.setTextColor(...PRIMARY_COLOR);
+        doc.text('Resumo Financeiro', 14, currentY);
+        doc.line(14, currentY + 2, 60, currentY + 2); // Underline
+        currentY += 10;
+
+        const totalCost = recipe.cmv_produto_valor || recipe.custo_total_estimado || 0;
+        const cmvPerKg = yieldKg > 0 ? totalCost / yieldKg : 0;
+        const cmvPerGram = yieldKg > 0 ? totalCost / (yieldKg * 1000) : 0;
+        const salePrice = recipe.preco_venda || 0;
+        const margin = salePrice > 0 ? ((salePrice - totalCost) / salePrice) * 100 : 0;
+        const cmvPercent = salePrice > 0 ? (totalCost / salePrice) * 100 : 0; // NEW: CMV %
+
+        const financialData = [
+            ['Custo Total da Receita', `R$ ${totalCost.toFixed(2)}`],
+            ['CMV por Kg', `R$ ${cmvPerKg.toFixed(2)}`],
+            ['CMV Unitário (g)', `R$ ${cmvPerGram.toFixed(4)}`],
+            ['Preço de Venda Sugerido', `R$ ${salePrice.toFixed(2)}`],
+            ['CMV %', `${cmvPercent.toFixed(2)}%`], // NEW Row
+            ['Margem Bruta Estimada', `${margin.toFixed(2)}%`]
+        ];
 
         autoTable(doc, {
-            startY: finalY + 5,
-            head: [['Indicador', 'Valor']],
-            body: [
-                ['Custo Total da Receita', formatCurrency(totalCost)],
-                ['CMV (por Kg)', formatCurrency(cmvKg)],
-                ['CMV (por Grama)', `R$ ${cmvUnit.toFixed(4)}`],
-                ['Preço de Venda (Sugerido/Atual)', formatCurrency(recipe.salePrice || 0)],
-            ],
-            theme: 'plain',
-            styles: { fontSize: 10 },
-            columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
-            tableWidth: 100
+            startY: currentY,
+            body: financialData,
+            theme: 'grid',
+            styles: {
+                fontSize: 10,
+                fontStyle: 'bold',
+                textColor: TEXT_COLOR,
+                lineColor: [226, 232, 240]
+            },
+            columnStyles: {
+                0: { cellWidth: 80, fillColor: SECONDARY_COLOR },
+                1: { cellWidth: 50, halign: 'right' }
+            }
         });
+
+        currentY = (doc as any).lastAutoTable.finalY + 15;
     }
 
-    // --- Footer ---
-    const pageCount = doc.getNumberOfPages();
-    for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(150);
+    // -- OBSERVATIONS --
+    if (recipe.observacoes) {
+        // Build a page break check roughly? autoTable handles it, but for text manually...
+        // Let's ensure we have space or add page.
+        const pageHeight = doc.internal.pageSize.height;
+        if (currentY > pageHeight - 40) {
+            doc.addPage();
+            currentY = 20;
+        }
 
-        // Line 1: Attribution
-        const attribution = "Desenvolvido por INOVARE Gestão Estratégica + Elaine Duarte Consultoria Gastronômica para Benta Brigaderia";
-        doc.text(attribution, pageWidth / 2, pageHeight - 15, { align: 'center' });
+        doc.setFontSize(14);
+        doc.setTextColor(...PRIMARY_COLOR);
+        doc.text('Modo de Preparo / Observações', 14, currentY);
+        doc.line(14, currentY + 2, 90, currentY + 2);
+        currentY += 10;
 
-        // Line 2: Brand + Page Number
-        doc.text(`FoodControl - Página ${i} of ${pageCount}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(50);
+
+        const splitText = doc.splitTextToSize(recipe.observacoes, 180);
+        doc.text(splitText, 14, currentY);
     }
+
+    // Apply Footer to all pages
+    addFooter();
 
     // Save
-    const sanitizeFilename = (name: string) => {
-        return name.replace(/[<>:"/\\|?*]/g, '');
-    };
-
-    const suffix = mode === 'full' ? 'gerencia' : 'produção';
-    const fileName = `FT - ${sanitizeFilename(recipe.name)} - ${suffix}.pdf`;
-    doc.save(fileName);
+    const suffix = isManagerial ? 'gerencia' : 'producao';
+    const sanitizedName = recipe.nome_receita.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    doc.save(`FT-${sanitizedName}-${suffix}.pdf`);
 };
 
 export const exportShoppingListPDF = (

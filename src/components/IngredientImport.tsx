@@ -1,14 +1,24 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Upload, Download, CheckCircle, XCircle } from 'lucide-react';
-import { useStore } from '../hooks/useStore';
-import type { Ingredient } from '../types';
+import { supabase } from '../lib/supabase';
+import type { Insumo, UnidadeMedida } from '../types';
 
-export const IngredientImport: React.FC = () => {
-    const { addIngredients } = useStore();
+export const IngredientImport: React.FC<{ onImportSuccess?: () => void }> = ({ onImportSuccess }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
+    const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
     const [message, setMessage] = useState('');
+
+    // Lookups (fetched on mount)
+    const [units, setUnits] = useState<UnidadeMedida[]>([]);
+
+    useEffect(() => {
+        const fetchLookups = async () => {
+            const { data } = await supabase.from('unidades_medida').select('*');
+            if (data) setUnits(data);
+        };
+        fetchLookups();
+    }, []);
 
     const handleDownloadTemplate = () => {
         const headers = [
@@ -19,8 +29,10 @@ export const IngredientImport: React.FC = () => {
             'Fornecedor',
             'Custo Compra',
             'Qtd Comprada',
-            'Peso Unidade',
-            'Unidade Ref (g/ml)',
+            'Unidade Compra', // Keeping in template for reference even if form hides it? Or remove? User said "exclua o campo", implying form. Template usually matches import.
+            // But verify "Peso Unidade" and "Unidade Ref (g/ml)"
+            'Peso Unidade', // Changed from 'Peso da Unidade'
+            'un Ref (g/ml)', // Updated to match user request
             'Fator Correção'
         ];
 
@@ -33,21 +45,10 @@ export const IngredientImport: React.FC = () => {
                 'Fornecedor': 'Atacadão',
                 'Custo Compra': 60.00,
                 'Qtd Comprada': 12,
+                'Unidade Compra': 'un',
                 'Peso Unidade': 1,
-                'Unidade Ref (g/ml)': 'g',
+                'un Ref (g/ml)': 'L',
                 'Fator Correção': 1.0
-            },
-            {
-                'Nome Padronizado': 'Morango',
-                'Descrição (Benta)': 'Morango da época',
-                'Categoria': 'Hortifruti',
-                'Categoria Sintética': 'Insumo de produção pronto',
-                'Fornecedor': 'Ceasa',
-                'Custo Compra': 10.00,
-                'Qtd Comprada': 1,
-                'Peso Unidade': 1,
-                'Unidade Ref (g/ml)': 'kg', // Note: User might put kg, we handle it
-                'Fator Correção': 1.2
             }
         ];
 
@@ -61,8 +62,11 @@ export const IngredientImport: React.FC = () => {
         const file = event.target.files?.[0];
         if (!file) return;
 
+        setStatus('loading');
+        setMessage('Lendo arquivo...');
+
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
             try {
                 const data = e.target?.result;
                 const workbook = XLSX.read(data, { type: 'binary' });
@@ -70,7 +74,7 @@ export const IngredientImport: React.FC = () => {
                 const sheet = workbook.Sheets[sheetName];
                 const jsonData = XLSX.utils.sheet_to_json(sheet);
 
-                processData(jsonData);
+                await processData(jsonData);
             } catch (err) {
                 setStatus('error');
                 setMessage('Erro ao ler arquivo Excel.');
@@ -78,70 +82,155 @@ export const IngredientImport: React.FC = () => {
             }
         };
         reader.readAsBinaryString(file);
-
-        // Reset input
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
-    const processData = (data: any[]) => {
+    const processData = async (data: any[]) => {
         try {
-            const importedIngredients: Ingredient[] = data.map((row: any) => {
-                const purchaseCost = parseFloat(row['Custo Compra']) || 0;
-                const purchaseQty = parseFloat(row['Qtd Comprada']) || 1;
-                const unitWeight = parseFloat(row['Peso Unidade']) || 1;
-                const correctionFactor = parseFloat(row['Fator Correção']) || 1;
+            setMessage(`Analisando ${data.length} registros...`);
 
-                const costPerUnit = purchaseCost / purchaseQty;
+            // 1. Extract Unique Categories and Synthetic Categories from Excel
+            const excelCategories = new Set<string>();
+            const excelSinCategories = new Set<string>();
 
-                // Check if unit is kg or L and convert if strictly needed, 
-                // but our app uses 'g' or 'ml' as ref. 
-                // If user enters 'kg', we treat '1 kg' as '1000 g' typically?
-                // The prompt logic was simpler: Base Cost / Weight.
-                // Let's keep consistent with existing logic.
-                const costPerRefUnit = costPerUnit / unitWeight;
-
-                const realCost = costPerUnit * correctionFactor;
-
-
-                return {
-                    id: crypto.randomUUID(),
-                    name: row['Nome Padronizado'] || 'Unnamed',
-                    description: row['Descrição (Benta)'] || '',
-                    category: row['Categoria'] || 'Outros',
-                    syntheticCategory: row['Categoria Sintética'] || 'Outros',
-                    supplier: row['Fornecedor'] || '',
-                    purchaseCost,
-                    purchaseQuantity: purchaseQty,
-                    unitWeight,
-                    referenceUnit: (row['Unidade Ref (g/ml)'] === 'ml' ? 'ml' : 'g'),
-                    realCost: realCost, // Calculated
-                    correctionFactor,
-                    price: costPerRefUnit, // Legacy map
-                    unit: (row['Unidade Ref (g/ml)'] === 'ml' ? 'ml' : 'g'),
-                    lastUpdated: new Date().toISOString()
-                };
+            data.forEach(row => {
+                if (row['Categoria']) excelCategories.add(row['Categoria'].toString().trim());
+                if (row['Categoria Sintética']) excelSinCategories.add(row['Categoria Sintética'].toString().trim());
             });
 
-            addIngredients(importedIngredients);
+            // 2. Fetch Existing Categories from DB
+            const [dbCats, dbSinCats] = await Promise.all([
+                supabase.from('categorias_insumos').select('*'),
+                supabase.from('categorias_sinteticas').select('*')
+            ]);
+
+            if (dbCats.error) throw dbCats.error;
+            if (dbSinCats.error) throw dbSinCats.error;
+
+            // Maps for Case-Insensitive Lookup (Name -> ID)
+            const catMap = new Map<string, string>();
+            const sinCatMap = new Map<string, string>();
+
+            dbCats.data.forEach(c => catMap.set(c.nome.toLowerCase(), c.id));
+            dbSinCats.data.forEach(c => sinCatMap.set(c.nome.toLowerCase(), c.id));
+
+            // 3. Identify Missing Categories
+            const newCatsToInsert: { nome: string }[] = [];
+            const newSinCatsToInsert: { nome: string }[] = [];
+
+            excelCategories.forEach(catName => {
+                if (!catMap.has(catName.toLowerCase())) {
+                    newCatsToInsert.push({ nome: catName });
+                }
+            });
+
+            excelSinCategories.forEach(catName => {
+                if (!sinCatMap.has(catName.toLowerCase())) {
+                    newSinCatsToInsert.push({ nome: catName });
+                }
+            });
+
+            // 4. Batch Insert Missing Categories
+            if (newCatsToInsert.length > 0) {
+                setMessage(`Cadastrando ${newCatsToInsert.length} novas categorias...`);
+                const { data: newCats, error } = await supabase
+                    .from('categorias_insumos')
+                    .insert(newCatsToInsert)
+                    .select();
+                if (error) throw error;
+                newCats.forEach(c => catMap.set(c.nome.toLowerCase(), c.id));
+            }
+
+            if (newSinCatsToInsert.length > 0) {
+                setMessage(`Cadastrando ${newSinCatsToInsert.length} novas categorias sintéticas...`);
+                const { data: newSinCats, error } = await supabase
+                    .from('categorias_sinteticas')
+                    .insert(newSinCatsToInsert)
+                    .select();
+                if (error) throw error;
+                newSinCats.forEach(c => sinCatMap.set(c.nome.toLowerCase(), c.id));
+            }
+
+            // 5. Prepare Ingredients for Upsert
+            setMessage(`Processando ${data.length} insumos...`);
+            const toUpsert: Partial<Insumo>[] = [];
+
+            for (const row of data) {
+                if (!row['Nome Padronizado']) continue;
+
+                const catName = row['Categoria']?.toString().trim();
+                const sinCatName = row['Categoria Sintética']?.toString().trim();
+                const unitBuyName = row['Unidade Compra'];
+                // Check for 'un Ref (g/ml)' as requested, fallback to 'Unidade Ref (g/ml)' or 'Unidade Peso'
+                const unitWeightRef = row['un Ref (g/ml)'] || row['Unidade Ref (g/ml)'] || row['Unidade Peso'];
+
+                const catId = catName ? catMap.get(catName.toLowerCase()) : null;
+                const sinCatId = sinCatName ? sinCatMap.get(sinCatName.toLowerCase()) : null;
+
+                const unitBuy = units.find(u => u.sigla.toLowerCase() === unitBuyName?.toString().trim().toLowerCase()) ||
+                    units.find(u => u.sigla === 'un');
+
+                // Map Unidade Ref to matching ID
+                const unitWeight = units.find(u => u.sigla.toLowerCase() === unitWeightRef?.toString().trim().toLowerCase()) ||
+                    units.find(u => u.sigla === 'kg'); // Default to KG if not found, or maybe 'g'?
+
+                toUpsert.push({
+                    nome_padronizado: row['Nome Padronizado'],
+                    descricao_produto: row['Descrição (Benta)'] || '',
+                    categoria_id: catId || null,
+                    categoria_sintetica_id: sinCatId || null,
+                    fornecedor: row['Fornecedor'],
+                    custo_compra: parseFloat(row['Custo Compra']) || 0,
+                    quantidade_compra: parseFloat(row['Qtd Comprada']) || 1,
+                    unidade_compra_id: unitBuy?.id, // Will default to 'un' or similar if not found
+                    peso_unidade: parseFloat(row['Peso Unidade']) || 1, // Updated column mapping
+                    unidade_peso_id: unitWeight?.id,
+                    fator_correcao: parseFloat(row['Fator Correção']) || 1
+                });
+            }
+
+            if (toUpsert.length === 0) {
+                throw new Error("Nenhum dado válido encontrado para importar.");
+            }
+
+            // 6. Upsert Ingredients (Match by nome_padronizado)
+            // Note: Currently 'nome_padronizado' might not be a unique constraint in DB, 
+            // but for 'upsert' to work as Update, we need a conflict target. 
+            // If the user wants to update existing ones, we should use 'nome_padronizado' as key assuming it is unique conceptually.
+            // If 'id' is verified, we used that. Here we rely on name.
+            // We'll trust the user intention or adding distinct onConflict.
+
+            const { error: upsertError } = await supabase
+                .from('insumos')
+                .upsert(toUpsert, { onConflict: 'nome_padronizado' });
+
+            if (upsertError) throw upsertError;
+
+            // Refresh Local State
+            // No need to local fetch again as we rely on onImportSuccess to refresh parent
+
+
             setStatus('success');
-            setMessage(`${importedIngredients.length} insumos importados com sucesso!`);
-            setTimeout(() => setStatus('idle'), 3000);
-        } catch (err) {
+            setMessage(`${toUpsert.length} insumos importados/atualizados com sucesso!`);
+            if (onImportSuccess) onImportSuccess();
+            setTimeout(() => setStatus('idle'), 4000);
+
+        } catch (err: any) {
             setStatus('error');
-            setMessage('Erro ao processar dados.');
+            setMessage(err.message || 'Erro ao processar dados.');
             console.error(err);
         }
     };
 
     return (
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center gap-2">
             <button
                 onClick={handleDownloadTemplate}
                 className="flex items-center px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 bg-white"
-                title="Baixar Template Excel"
+                title="Baixar Template"
             >
                 <Download size={18} className="mr-2" />
-                <span className="text-sm font-medium">Template</span>
+                <span className="hidden sm:inline">Template</span>
             </button>
 
             <div className="relative">
@@ -154,26 +243,24 @@ export const IngredientImport: React.FC = () => {
                 />
                 <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    disabled={status === 'loading'}
+                    className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
                     title="Importar Excel"
                 >
                     <Upload size={18} className="mr-2" />
-                    <span className="text-sm font-medium">Importar</span>
+                    <span className="hidden sm:inline">{status === 'loading' ? '...' : 'Importar'}</span>
                 </button>
             </div>
 
             {status === 'success' && (
-                <div className="flex items-center text-green-600 text-sm animate-fade-in">
-                    <CheckCircle size={16} className="mr-1" />
-                    {message}
-                </div>
+                <span className="text-green-600 text-sm flex items-center font-medium">
+                    <CheckCircle size={16} className="mr-1" /> Sucesso!
+                </span>
             )}
-
             {status === 'error' && (
-                <div className="flex items-center text-red-600 text-sm animate-fade-in">
-                    <XCircle size={16} className="mr-1" />
-                    {message}
-                </div>
+                <span className="text-red-600 text-sm flex items-center font-medium">
+                    <XCircle size={16} className="mr-1" /> {message}
+                </span>
             )}
         </div>
     );

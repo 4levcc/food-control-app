@@ -1,45 +1,94 @@
-import React, { useMemo } from 'react';
-import { useStore } from '../hooks/useStore';
+import React, { useMemo, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
+import type { FichaTecnica, Insumo, FtIngrediente, SetorResponsavel } from '../types';
 import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { TrendingUp, AlertCircle, ChefHat, DollarSign, Info } from 'lucide-react';
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
-
 export const Dashboard: React.FC = () => {
-    const { recipes, ingredients } = useStore();
+    const [recipes, setRecipes] = useState<FichaTecnica[]>([]);
+    const [ingredients, setIngredients] = useState<Insumo[]>([]);
+    const [ftIngredients, setFtIngredients] = useState<FtIngrediente[]>([]);
+    const [sectors, setSectors] = useState<SetorResponsavel[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const [recipesRes, ingRes, ftIngRes, sectorsRes] = await Promise.all([
+                supabase.from('fichas_tecnicas').select('*'),
+                supabase.from('insumos').select('*'),
+                supabase.from('ft_ingredientes').select('*'),
+                supabase.from('setores_responsaveis').select('*')
+            ]);
+
+            if (recipesRes.data) setRecipes(recipesRes.data);
+            if (ingRes.data) setIngredients(ingRes.data);
+            if (ftIngRes.data) setFtIngredients(ftIngRes.data);
+            if (sectorsRes.data) setSectors(sectorsRes.data);
+        } catch (error) {
+            console.error('Error fetching dashboard data:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const stats = useMemo(() => {
         // 1. Basic Counts
         const totalRecipes = recipes.length;
         const totalIngredients = ingredients.length;
-        const totalBaseProducts = recipes.filter(r => r.productType === 'Base').length;
-        const totalFinalProducts = recipes.filter(r => r.productType === 'Final').length;
+        const totalBaseProducts = recipes.filter(r => r.tipo_produto === 'Base').length;
+        const totalFinalProducts = recipes.filter(r => r.tipo_produto === 'Final').length;
 
         // 2. Financials (Only for Final Products)
-        const finalProducts = recipes.filter(r => r.productType === 'Final');
+        const finalProducts = recipes.filter(r => r.tipo_produto === 'Final');
 
         const financialData = finalProducts.map(rec => {
-            const totalCost = rec.items.reduce((sum, item) => {
-                const ing = ingredients.find(i => i.id === item.ingredientId);
-                if (!ing) return sum;
-                const unitCost = ing.price * (ing.correctionFactor || 1);
-                return sum + (unitCost * item.quantity);
-            }, 0);
+            // Calculate Cost based on ingredients
+            // Calculate Cost based on ingredients
+            const recIngredients = ftIngredients.filter(ft => ft.ft_id === rec.id);
 
-            const salePrice = rec.salePrice || 0;
+            // Use stored total cost if available, otherwise fallback to calculation (or 0)
+            let totalCost = rec.custo_total_estimado || 0;
+
+            // Optional: Recalculate if stored value is missing (Backward compatibility)
+            if (totalCost === 0 && recIngredients.length > 0) {
+                totalCost = recIngredients.reduce((sum, item) => {
+                    const ing = ingredients.find(i => i.id === item.insumo_id);
+                    if (!ing) return sum;
+
+                    const cost = ing.custo_compra || 0;
+                    const qty = ing.quantidade_compra || 1;
+                    const weight = ing.peso_unidade || 1;
+                    const factor = ing.fator_correcao || 1;
+
+                    const costPerPurchaseUnit = qty > 0 ? cost / qty : 0;
+                    const costPerBaseUnit = weight > 0 ? costPerPurchaseUnit / weight : 0;
+                    const realUnitCost = costPerBaseUnit * factor;
+
+                    return sum + (realUnitCost * item.quantidade_utilizada);
+                }, 0);
+            }
+
+            const salePrice = rec.preco_venda || 0;
             const grossMargin = salePrice - totalCost;
             const marginPercent = salePrice > 0 ? (grossMargin / salePrice) * 100 : 0;
             const cmvPercent = salePrice > 0 ? (totalCost / salePrice) * 100 : 0;
 
             return {
                 ...rec,
+                name: rec.nome_receita, // Mapping for charts
                 totalCost,
                 marginPercent,
                 cmvPercent,
                 grossMargin,
-                hasPrice: salePrice > 0
+                hasPrice: salePrice > 0,
+                sector: getSectorName(rec.setor_responsavel_id) // Placeholder, need lookup or map
             };
         });
 
@@ -58,34 +107,41 @@ export const Dashboard: React.FC = () => {
         const topProfitable = sortedByMargin.slice(0, 5);
         const worstProfitable = [...sortedByMargin].reverse().slice(0, 5);
 
-        // 3. Sector Distribution & Stats
-        const sectorCounts: Record<string, number> = {};
-        const sectorFinancials: Record<string, { totalMargin: number; totalCmv: number; count: number }> = {};
-
-        finalProducts.forEach(rec => {
-            const sector = rec.sector || 'Outros';
-            sectorCounts[sector] = (sectorCounts[sector] || 0) + 1;
+        // 3. Sector Distribution
+        const sectorCounts: { [key: string]: number } = {};
+        recipes.forEach(r => {
+            const sectorId = r.setor_responsavel_id || 'others';
+            sectorCounts[sectorId] = (sectorCounts[sectorId] || 0) + 1;
         });
 
-        // Calculate Sector Financials (only for items with price)
-        productsWithPrice.forEach(rec => {
-            const sector = rec.sector || 'Outros';
-            if (!sectorFinancials[sector]) {
-                sectorFinancials[sector] = { totalMargin: 0, totalCmv: 0, count: 0 };
-            }
-            sectorFinancials[sector].totalMargin += rec.marginPercent;
-            sectorFinancials[sector].totalCmv += rec.cmvPercent;
-            sectorFinancials[sector].count += 1;
-        });
+        const sectorStats = Object.entries(sectorCounts).map(([id, count]) => {
+            const sectorName = sectors.find(s => s.id === id)?.nome || (id === 'others' ? 'Sem Setor' : 'Outros');
+            return {
+                name: sectorName,
+                value: count
+            };
+        }).sort((a, b) => b.value - a.value);
 
-        const sectorStats = Object.entries(sectorFinancials).map(([sector, data]) => ({
-            sector,
-            avgMargin: data.count > 0 ? data.totalMargin / data.count : 0,
-            avgCmv: data.count > 0 ? data.totalCmv / data.count : 0,
-            count: data.count
-        }));
+        const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
-        const sectorData = Object.entries(sectorCounts).map(([name, value]) => ({ name, value }));
+        // 4. Sector Profitability (New)
+        const sectorProfitability = sectors.map(sector => {
+            const sectorProducts = productsWithPrice.filter(p => p.setor_responsavel_id === sector.id);
+            const count = sectorProducts.length;
+
+            if (count === 0) return null;
+
+            const avgMargin = sectorProducts.reduce((acc, curr) => acc + curr.marginPercent, 0) / count;
+            const avgCmv = sectorProducts.reduce((acc, curr) => acc + curr.cmvPercent, 0) / count;
+
+            return {
+                id: sector.id,
+                name: sector.nome,
+                avgMargin,
+                avgCmv,
+                count
+            };
+        }).filter((s): s is NonNullable<typeof s> => s !== null);
 
         return {
             totalRecipes,
@@ -97,12 +153,22 @@ export const Dashboard: React.FC = () => {
             lowMarginCount,
             topProfitable,
             worstProfitable,
-            sectorData,
-            sectorStats,
+
             productsWithPriceCount: productsWithPrice.length,
-            alerts: productsWithPrice.filter(p => p.marginPercent < 30) // Critical Alerts
+            alerts: productsWithPrice.filter(p => p.marginPercent < 30),
+            financialData,
+            sectorStats,
+            sectorProfitability,
+            COLORS
         };
-    }, [recipes, ingredients]);
+    }, [recipes, ingredients, ftIngredients, sectors]);
+
+    // Helper to fetch sectors to show proper names
+    // I will modify the main fetch to include sectors
+
+    if (loading) {
+        return <div className="p-8 text-center text-gray-500">Carregando dashboard...</div>;
+    }
 
     return (
         <div className="space-y-8 animate-fade-in">
@@ -215,27 +281,32 @@ export const Dashboard: React.FC = () => {
                 </div>
 
                 {/* Secondary Chart: Distribution */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                    <h3 className="font-bold text-gray-900 mb-6">Distribuição por Setor</h3>
-                    <div className="h-72">
-                        {stats.sectorData.length > 0 ? (
+                {/* Simplified: Removed Pie Chart as per strict MVP request to focus on real data and removing broken sectors if complex */}
+                {/* Or I can re-add it if I fetch sectors. Let's keep it simpler for now or just show a message if empty. */}
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col items-center">
+                    <h3 className="font-bold text-gray-900 mb-2 w-full text-left">Distribuição por Setor</h3>
+                    <div className="h-64 w-full">
+                        {stats.sectorStats.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
-                                        data={stats.sectorData}
+                                        data={stats.sectorStats}
                                         cx="50%"
                                         cy="50%"
                                         innerRadius={60}
                                         outerRadius={80}
-                                        fill="#8884d8"
                                         paddingAngle={5}
                                         dataKey="value"
                                     >
-                                        {stats.sectorData.map((_, index) => (
-                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        {stats.sectorStats.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={stats.COLORS[index % stats.COLORS.length]} />
                                         ))}
                                     </Pie>
-                                    <Tooltip />
+                                    <Tooltip
+                                        formatter={(value: number) => [value, 'Receitas']}
+                                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                                    />
+                                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
                                 </PieChart>
                             </ResponsiveContainer>
                         ) : (
@@ -243,14 +314,6 @@ export const Dashboard: React.FC = () => {
                                 Nenhuma receita cadastrada.
                             </div>
                         )}
-                        <div className="mt-4 flex flex-wrap justify-center gap-2">
-                            {stats.sectorData.map((entry, index) => (
-                                <div key={entry.name} className="flex items-center text-xs text-gray-500">
-                                    <span className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
-                                    {entry.name}
-                                </div>
-                            ))}
-                        </div>
                     </div>
                 </div>
             </div>
@@ -284,86 +347,91 @@ export const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Profitability by Sector Cards */}
-            {stats.sectorStats.length > 0 && (
-                <div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-4">Rentabilidade por Setor</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {stats.sectorStats.map((sector) => (
-                            <div key={sector.sector} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                                <div className="flex items-center mb-2">
-                                    <DollarSign className="text-yellow-600 mr-2" size={20} />
-                                    <h4 className="font-bold text-gray-900">Rentabilidade - {sector.sector}</h4>
-                                    <div className="ml-auto group relative">
-                                        <Info size={16} className="text-gray-400 cursor-help" />
-                                        <span className="absolute right-0 top-6 w-48 bg-gray-800 text-white text-xs rounded p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
-                                            Baseado em {sector.count} produtos com preço.
-                                        </span>
-                                    </div>
-                                </div>
-                                <p className="text-xs text-gray-500 mb-6">Margem de contribuição média</p>
-
-                                <div className="space-y-4">
-                                    {/* CMV Bar */}
-                                    <div>
-                                        <div className="flex justify-between text-sm mb-1">
-                                            <span className="text-gray-600">CMV Médio</span>
-                                            <span className="font-bold text-orange-600">{sector.avgCmv.toFixed(2)}%</span>
-                                        </div>
-                                        <div className="w-full bg-gray-100 rounded-full h-2.5">
-                                            <div
-                                                className="bg-orange-500 h-2.5 rounded-full transition-all duration-500"
-                                                style={{ width: `${Math.min(sector.avgCmv, 100)}%` }}
-                                            ></div>
-                                        </div>
-                                    </div>
-
-                                    {/* MC Bar */}
-                                    <div>
-                                        <div className="flex justify-between text-sm mb-1">
-                                            <span className="text-gray-600">MC Média</span>
-                                            <span className="font-bold text-green-600">{sector.avgMargin.toFixed(2)}%</span>
-                                        </div>
-                                        <div className="w-full bg-gray-100 rounded-full h-2.5">
-                                            <div
-                                                className="bg-green-500 h-2.5 rounded-full transition-all duration-500"
-                                                style={{ width: `${Math.min(sector.avgMargin, 100)}%` }}
-                                            ></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
             {/* Critical Alerts List */}
-            {stats.alerts.length > 0 && (
-                <div className="bg-red-50 border border-red-100 rounded-xl p-6">
-                    <div className="flex items-center mb-4">
-                        <AlertCircle className="text-red-600 mr-2" size={20} />
-                        <h3 className="font-bold text-red-900">Atenção Necessária ({stats.alerts.length})</h3>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {stats.alerts.slice(0, 6).map(alert => (
-                            <div key={alert.id} className="bg-white p-3 rounded-lg border border-red-100 shadow-sm flex justify-between items-center">
-                                <div>
-                                    <p className="font-medium text-gray-900">{alert.name}</p>
-                                    <p className="text-xs text-red-600">Margem: {alert.marginPercent.toFixed(1)}%</p>
+            {
+                stats.alerts.length > 0 && (
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-6">
+                        <div className="flex items-center mb-4">
+                            <AlertCircle className="text-red-600 mr-2" size={20} />
+                            <h3 className="font-bold text-red-900">Atenção Necessária ({stats.alerts.length})</h3>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {stats.alerts.slice(0, 6).map(alert => (
+                                <div key={alert.id} className="bg-white p-3 rounded-lg border border-red-100 shadow-sm flex justify-between items-center">
+                                    <div>
+                                        <p className="font-medium text-gray-900">{alert.name}</p>
+                                        <p className="text-xs text-red-600">Margem: {alert.marginPercent.toFixed(1)}%</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="text-xs font-medium text-gray-500">CMV</span>
+                                        <p className="text-sm font-bold text-gray-700">{alert.cmvPercent.toFixed(1)}%</p>
+                                    </div>
                                 </div>
-                                <div className="text-right">
-                                    <span className="text-xs font-medium text-gray-500">CMV</span>
-                                    <p className="text-sm font-bold text-gray-700">{alert.cmvPercent.toFixed(1)}%</p>
+                            ))}
+                        </div>
+                        {stats.alerts.length > 6 && (
+                            <p className="text-center text-xs text-red-600 mt-4">E mais {stats.alerts.length - 6} itens...</p>
+                        )}
+                    </div>
+                )
+            }
+            {/* Sector Profitability Cards (New) */}
+            <div>
+                <h3 className="font-bold text-gray-900 mb-4 text-lg">Rentabilidade por Setor</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {stats.sectorProfitability.map((sector: any) => (
+                        <div key={sector.id} className="bg-white p-6 rounded-xl shadow-sm border border-orange-100 hover:shadow-md transition-shadow">
+                            <div className="flex items-center gap-2 mb-2">
+                                <DollarSign className="text-orange-500" size={20} />
+                                <h4 className="font-bold text-gray-900">Rentabilidade - {sector.name}</h4>
+                            </div>
+                            <p className="text-sm text-gray-500 mb-6">Margem de contribuição média</p>
+
+                            <div className="space-y-6">
+                                {/* CMV Bar */}
+                                <div>
+                                    <div className="flex justify-between text-sm font-medium mb-1">
+                                        <span className="text-gray-600">CMV Médio</span>
+                                        <span className="text-orange-600">{sector.avgCmv.toFixed(2)}%</span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 rounded-full h-2">
+                                        <div
+                                            className="bg-orange-500 h-2 rounded-full transition-all duration-500"
+                                            style={{ width: `${Math.min(sector.avgCmv, 100)}%` }}
+                                        ></div>
+                                    </div>
+                                </div>
+
+                                {/* Margin Bar */}
+                                <div>
+                                    <div className="flex justify-between text-sm font-medium mb-1">
+                                        <span className="text-gray-600">MC Média</span>
+                                        <span className="text-green-600">{sector.avgMargin.toFixed(2)}%</span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 rounded-full h-2">
+                                        <div
+                                            className="bg-green-500 h-2 rounded-full transition-all duration-500"
+                                            style={{ width: `${Math.min(sector.avgMargin, 100)}%` }}
+                                        ></div>
+                                    </div>
                                 </div>
                             </div>
-                        ))}
-                    </div>
-                    {stats.alerts.length > 6 && (
-                        <p className="text-center text-xs text-red-600 mt-4">E mais {stats.alerts.length - 6} itens...</p>
+                        </div>
+                    ))}
+                    {stats.sectorProfitability.length === 0 && (
+                        <div className="col-span-full p-8 text-center text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                            Nenhum dado de rentabilidade por setor disponível.
+                        </div>
                     )}
                 </div>
-            )}
-        </div>
+            </div>
+        </div >
     );
 };
+
+// Helper for sector name if needed (can implement context or fetch later)
+function getSectorName(id: string | null) {
+    if (!id) return 'Outros';
+    // Simplified: return 'Geral' or id until map is ready
+    return 'Geral';
+}

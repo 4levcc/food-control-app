@@ -1,352 +1,367 @@
-import React, { useState } from 'react';
-import * as XLSX from 'xlsx';
-import { Plus, Search, Pencil, Trash2, AlertTriangle, Copy, Download } from 'lucide-react';
-import { useStore } from '../hooks/useStore';
+import { useState, useEffect } from 'react';
+import { Plus, Search, Filter, Trash2, Copy, FileSpreadsheet, Pencil } from 'lucide-react';
 import { IngredientForm } from '../components/IngredientForm';
 import { IngredientImport } from '../components/IngredientImport';
-import type { Ingredient } from '../types';
+import { supabase } from '../lib/supabase';
+import type { Insumo, CategoriaInsumo, CategoriaSintetica, UnidadeMedida } from '../types';
+import * as XLSX from 'xlsx';
 
-export const Ingredients: React.FC = () => {
-    const { ingredients, deleteIngredient, deleteIngredients, settings } = useStore();
+export function Ingredients() {
+    const [ingredients, setIngredients] = useState<Insumo[]>([]);
+
+    // Lookups
+    const [categorias, setCategorias] = useState<CategoriaInsumo[]>([]);
+    const [categoriasSinteticas, setCategoriasSinteticas] = useState<CategoriaSintetica[]>([]);
+    const [unidades, setUnidades] = useState<UnidadeMedida[]>([]);
+
     const [isFormOpen, setIsFormOpen] = useState(false);
-    const [editingIngredient, setEditingIngredient] = useState<Ingredient | undefined>(undefined);
     const [searchTerm, setSearchTerm] = useState('');
-    const [deleteId, setDeleteId] = useState<string | null>(null); // For single delete
-    const [selectedIds, setSelectedIds] = useState<string[]>([]);
-    const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
-    const [filterCategory, setFilterCategory] = useState<string>('All');
+    const [selectedCategory, setSelectedCategory] = useState<string>('all');
+    const [editingIngredient, setEditingIngredient] = useState<Insumo | undefined>(undefined);
+    const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [ingredientToDelete, setIngredientToDelete] = useState<string | null>(null);
 
-    // Use the dynamic categories from settings
-    const syntheticCategories = settings.syntheticCategories;
+    useEffect(() => {
+        fetchData();
+    }, []);
 
-    const filteredIngredients = ingredients.filter((ing) => {
-        const matchesSearch = ing.name.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesCategory = filterCategory === 'All'
-            ? true
-            : (ing.syntheticCategory || '') === filterCategory;
+    const fetchData = async () => {
+        try {
+            const [ins, cats, sinCats, unds] = await Promise.all([
+                supabase.from('insumos').select('*').order('nome_padronizado'),
+                supabase.from('categorias_insumos').select('*').order('nome'),
+                supabase.from('categorias_sinteticas').select('*').order('nome'),
+                supabase.from('unidades_medida').select('*').order('sigla')
+            ]);
 
-        return matchesSearch && matchesCategory;
-    });
+            if (ins.data) setIngredients(ins.data);
+            if (cats.data) setCategorias(cats.data);
+            if (sinCats.data) setCategoriasSinteticas(sinCats.data);
+            if (unds.data) setUnidades(unds.data);
+        } catch (error) {
+            console.error("Error fetching data", error);
+        }
+    };
 
-    const handleEdit = (ing: Ingredient) => {
-        setEditingIngredient(ing);
-        setIsFormOpen(true);
+    const handleSave = async (data: Partial<Insumo>) => {
+        try {
+            if (editingIngredient) {
+                // Update
+                const { error } = await supabase
+                    .from('insumos')
+                    .update(data)
+                    .eq('id', editingIngredient.id);
+                if (error) throw error;
+            } else {
+                // Create
+                const payload = { ...data };
+                delete payload.id;
+                const { error } = await supabase.from('insumos').insert(payload);
+                if (error) throw error;
+            }
+            fetchData();
+            setIsFormOpen(false);
+            setEditingIngredient(undefined);
+        } catch (error) {
+            console.error("Error saving ingredient", error);
+            alert("Erro ao salvar insumo.");
+        }
+    };
+
+    const confirmDelete = async () => {
+        if (ingredientToDelete) {
+            await executeDelete(ingredientToDelete);
+        } else {
+            await handleBulkDelete();
+        }
     };
 
     const handleDeleteClick = (id: string) => {
-        setDeleteId(id);
+        setIngredientToDelete(id);
+        setShowDeleteConfirm(true);
     };
 
-    const confirmDelete = () => {
-        if (deleteId) {
-            deleteIngredient(deleteId);
-            setDeleteId(null);
+    const executeDelete = async (id: string) => {
+        try {
+            // 1. Delete usages in recipes first (Manual Cascade)
+            const { error: usageError } = await supabase.from('ft_ingredientes').delete().eq('insumo_id', id);
+            if (usageError) throw usageError;
+
+            // 2. Delete the ingredient
+            const { error } = await supabase.from('insumos').delete().eq('id', id);
+            if (error) throw error;
+
+            fetchData();
+            setSelectedIngredients(prev => prev.filter(i => i !== id));
+            setShowDeleteConfirm(false);
+            setIngredientToDelete(null);
+        } catch (error) {
+            console.error("Error deleting", error);
+            alert("Erro ao excluir.");
         }
     };
 
-    const handleCloseForm = () => {
-        setIsFormOpen(false);
-        setEditingIngredient(undefined);
-    };
-
-    // Bulk Actions
-    const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.checked) {
-            setSelectedIds(filteredIngredients.map(i => i.id));
-        } else {
-            setSelectedIds([]);
+    const handleDuplicate = async (ing: Insumo) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { id, data_cadastro, ...rest } = ing;
+        const copy = {
+            ...rest,
+            nome_padronizado: `${ing.nome_padronizado} (Cópia)`
+        };
+        try {
+            const { error } = await supabase.from('insumos').insert(copy);
+            if (error) throw error;
+            fetchData();
+        } catch (error) {
+            console.error("Error duplicating", error);
         }
     };
 
-    const handleSelectOne = (id: string) => {
-        setSelectedIds(prev =>
-            prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
-        );
+    const handleBulkDelete = async () => {
+        try {
+            // 1. Delete usages
+            const { error: usageError } = await supabase.from('ft_ingredientes').delete().in('insumo_id', selectedIngredients);
+            if (usageError) throw usageError;
+
+            // 2. Delete ingredients
+            const { error } = await supabase.from('insumos').delete().in('id', selectedIngredients);
+            if (error) throw error;
+
+            fetchData();
+            setSelectedIngredients([]);
+            setShowDeleteConfirm(false);
+        } catch (error) {
+            console.error("Bulk delete error", error);
+            alert("Erro ao excluir itens.");
+        }
     };
 
-    const confirmBulkDelete = () => {
-        deleteIngredients(selectedIds);
-        setSelectedIds([]);
-        setShowBulkDeleteConfirm(false);
-    };
+    const getCategoryName = (id: string) => categorias.find(c => c.id === id)?.nome || '-';
 
-    const handleExportSelected = () => {
-        const ingredientsToExport = ingredients.filter(ing => selectedIds.includes(ing.id));
-
-        const headers = [
-            'Nome Padronizado',
-            'Descrição (Benta)',
-            'Categoria',
-            'Categoria Sintética',
-            'Fornecedor',
-            'Custo Compra',
-            'Qtd Comprada',
-            'Peso Unidade',
-            'Unidade Ref (g/ml)',
-            'Fator Correção'
-        ];
-
-        const exportData = ingredientsToExport.map(ing => ({
-            'Nome Padronizado': ing.name,
-            'Descrição (Benta)': ing.description,
-            'Categoria': ing.category,
-            'Categoria Sintética': ing.syntheticCategory,
-            'Fornecedor': ing.supplier,
-            'Custo Compra': ing.purchaseCost,
-            'Qtd Comprada': ing.purchaseQuantity,
-            'Peso Unidade': ing.unitWeight,
-            'Unidade Ref (g/ml)': ing.referenceUnit,
-            'Fator Correção': ing.correctionFactor
-        }));
-
-        const ws = XLSX.utils.json_to_sheet(exportData, { header: headers });
+    const handleExport = () => {
+        const data = ingredients
+            .filter(i => selectedIngredients.length === 0 || selectedIngredients.includes(i.id))
+            .map(i => ({
+                Nome: i.nome_padronizado,
+                Descricao: i.descricao_produto,
+                Categoria: getCategoryName(i.categoria_id || ''),
+                Fornecedor: i.fornecedor,
+                Custo: i.custo_compra,
+                Unidade: unidades.find(u => u.id === i.unidade_compra_id)?.sigla
+            }));
+        const ws = XLSX.utils.json_to_sheet(data);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Insumos");
-        XLSX.writeFile(wb, "insumos_foodcontrol.xlsx");
+        XLSX.writeFile(wb, "insumos.xlsx");
+    };
+
+    const filteredIngredients = ingredients.filter(ing => {
+        const matchSearch = ing.nome_padronizado.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchCat = selectedCategory === 'all' || ing.categoria_id === selectedCategory;
+        return matchSearch && matchCat;
+    });
+
+    const toggleSelectAll = () => {
+        if (selectedIngredients.length === filteredIngredients.length) setSelectedIngredients([]);
+        else setSelectedIngredients(filteredIngredients.map(i => i.id));
+    };
+
+    const toggleSelect = (id: string) => {
+        if (selectedIngredients.includes(id)) setSelectedIngredients(p => p.filter(i => i !== id));
+        else setSelectedIngredients(p => [...p, id]);
     };
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h2 className="text-2xl font-bold text-gray-900">Insumos</h2>
-                <div className="flex space-x-2">
-                    {selectedIds.length > 0 ? (
-                        <>
-                            <button
-                                onClick={handleExportSelected}
-                                className="bg-green-600 text-white px-4 py-2 rounded-lg shadow hover:bg-green-700 transition-colors flex items-center"
-                            >
-                                <Download size={18} className="mr-2" />
-                                Exportar
-                            </button>
-                            <button
-                                onClick={() => setShowBulkDeleteConfirm(true)}
-                                className="bg-red-600 text-white px-4 py-2 rounded-lg shadow hover:bg-red-700 transition-colors flex items-center"
-                            >
-                                <Trash2 size={18} className="mr-2" />
-                                Excluir ({selectedIds.length})
-                            </button>
-                        </>
-                    ) : (
-                        <>
-                            <IngredientImport />
-                            <button
-                                onClick={() => setIsFormOpen(true)}
-                                className="bg-blue-600 text-white p-2 rounded-full shadow-lg hover:bg-blue-700 transition-colors"
-                                title="Novo Insumo"
-                            >
-                                <Plus size={24} />
-                            </button>
-                        </>
-                    )}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800">Insumos</h1>
+                    <p className="text-gray-600 mt-1">Gerencie seu estoque de ingredientes</p>
                 </div>
+                <button
+                    onClick={() => {
+                        setEditingIngredient(undefined);
+                        setIsFormOpen(true);
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                >
+                    <Plus size={20} />
+                    Novo Insumo
+                </button>
             </div>
 
-            {/* Toolbar: Category Filter + Select All + Search */}
-            <div className="flex flex-col md:flex-row gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200 justify-between items-center">
-                {/* Left: Filter and Select All */}
-                <div className="flex flex-col md:flex-row gap-4 items-start md:items-center flex-1 w-full md:w-auto">
+            <div className="flex justify-end mb-4">
+                <IngredientImport onImportSuccess={fetchData} />
+            </div>
 
-                    {/* Category Filter */}
-                    <div className="relative w-full md:w-auto">
-                        <select
-                            value={filterCategory}
-                            onChange={(e) => setFilterCategory(e.target.value)}
-                            className="appearance-none w-full md:w-auto bg-white border border-gray-300 text-gray-700 py-2 px-4 pr-8 rounded-lg leading-tight focus:outline-none focus:bg-white focus:border-blue-500 text-sm shadow-sm"
-                        >
-                            <option value="All">Todas Categorias</option>
-                            {syntheticCategories.map(cat => (
-                                <option key={cat} value={cat}>{cat}</option>
-                            ))}
-                        </select>
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                            <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" /></svg>
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div className="p-4 border-b border-gray-200 flex flex-col sm:flex-row gap-4">
+                    <div className="flex-1 relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                        <input
+                            type="text"
+                            placeholder="Buscar insumos..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                    </div>
+                    <div className="flex gap-2">
+                        <div className="relative min-w-[200px]">
+                            <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                            <select
+                                value={selectedCategory}
+                                onChange={(e) => setSelectedCategory(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                            >
+                                <option value="all">Todas as Categorias</option>
+                                {categorias.map(c => (
+                                    <option key={c.id} value={c.id}>{c.nome}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
-
-                    {/* Select All */}
-                    <label className="flex items-center cursor-pointer hover:text-blue-700 whitespace-nowrap">
-                        <input
-                            type="checkbox"
-                            className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 mr-2 cursor-pointer"
-                            checked={filteredIngredients.length > 0 && selectedIds.length === filteredIngredients.length}
-                            onChange={handleSelectAll}
-                        />
-                        <span className="text-sm font-medium text-gray-700">
-                            Selecionar Todos
-                        </span>
-                    </label>
-
-                    {selectedIds.length > 0 && (
-                        <span className="text-sm text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-medium border border-blue-100 animate-fade-in whitespace-nowrap">
-                            {selectedIds.length} selecionado{selectedIds.length !== 1 ? 's' : ''}
-                        </span>
-                    )}
                 </div>
 
-                {/* Right: Search */}
-                <div className="relative w-full md:w-64">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                    <input
-                        type="text"
-                        placeholder="Buscar insumo..."
-                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none shadow-sm"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                </div>
-            </div>
+                {selectedIngredients.length > 0 && (
+                    <div className="bg-blue-50 px-4 py-2 flex items-center gap-4 border-b border-blue-100">
+                        <span className="text-sm text-blue-700 font-medium">{selectedIngredients.length} selecionados</span>
+                        <button onClick={handleExport} className="text-green-600 hover:text-green-800 flex items-center gap-1 text-sm font-medium">
+                            <FileSpreadsheet size={16} /> Exportar
+                        </button>
+                        <button onClick={() => setShowDeleteConfirm(true)} className="text-red-600 hover:text-red-800 flex items-center gap-1 text-sm font-medium">
+                            <Trash2 size={16} /> Excluir
+                        </button>
+                    </div>
+                )}
 
-            {/* Table Area */}
-            <div className="bg-white rounded-lg shadow overflow-hidden border border-gray-200">
+                {showDeleteConfirm && (
+                    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+                        <div className="bg-white p-6 rounded-lg shadow-xl">
+                            <h3>Confirmar Exclusão</h3>
+                            <p>
+                                {ingredientToDelete
+                                    ? `Tem certeza que deseja excluir este insumo? Ele será removido de todas as receitas.`
+                                    : `Excluir ${selectedIngredients.length} itens? Eles serão removidos de todas as receitas.`}
+                            </p>
+                            <div className="flex justify-end gap-2 mt-4">
+                                <button onClick={() => { setShowDeleteConfirm(false); setIngredientToDelete(null); }} className="px-4 py-2 bg-gray-100 rounded">Cancelar</button>
+                                <button onClick={confirmDelete} className="px-4 py-2 bg-red-600 text-white rounded">Excluir</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-4 py-3 text-left w-10">
-                                    {/* Header checkbox logic already handled by toolbar, optionally duplicate here if needed */}
+                                <th className="px-6 py-3 w-10">
+                                    <input type="checkbox" checked={selectedIngredients.length === filteredIngredients.length && filteredIngredients.length > 0} onChange={toggleSelectAll} />
                                 </th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome Padronizado (FT)</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria / Sintética</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Custo em Gramas/ML</th>
-                                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Custo em KG/L</th>
-                                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Nome</th>
+                                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Categoria</th>
+                                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Fornecedor</th>
+                                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase text-right">Custo Real<br />(Kg/ L/ Un)</th>
+                                <th className="px-6 py-3 text-xs font-semibold text-gray-500 uppercase text-right">Custo Real<br />(g/ ml/ un)</th>
+                                <th className="px-6 py-3 text-right">Ações</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {filteredIngredients.map((ing) => {
-                                // Calculations
-                                const costPerUnit = (ing.purchaseCost || 0) / (ing.purchaseQuantity || 1);
-                                const weight = ing.unitWeight || 1;
-                                const costPerBaseUnit = costPerUnit / weight;
-                                const fc = ing.correctionFactor || 1;
-                                const realCostPerBaseUnit = costPerBaseUnit * fc;
+                            {filteredIngredients.map(ing => {
+                                // Calculate Real Costs Inline
+                                const cost = ing.custo_compra || 0;
+                                const qty = ing.quantidade_compra || 1;
+                                const weight = ing.peso_unidade || 1;
+                                const factor = ing.fator_correcao || 1;
 
-                                // Determine Multiplier and Labels
-                                const isGram = ing.referenceUnit === 'g';
-                                const isMl = ing.referenceUnit === 'ml';
-                                const largeUnitMultiplier = (isGram || isMl) ? 1000 : 1;
-                                const largeUnitCost = realCostPerBaseUnit * largeUnitMultiplier; // Should be based on Real Cost? 
-                                // Original logic was Base Cost * 1000. Let's stick to prompt: "Custo em Kg". Usually implies Real Cost per Kg.
-                                // If "Custo em gramas" is Real Cost per Gram, then "Custo em Kg" should be Real Cost per Kg. 
-                                // Previous code was showing "Kg/L" based on Base Unit Cost * 1000 (which is somewhat confusing if it's the purchase price normalized or real cost).
-                                // Let's use Real Cost logic for consistency with "Custo em Gramas".
+                                const costPerUnit = qty > 0 ? cost / qty : 0;
+                                const costPerBase = weight > 0 ? costPerUnit / weight : 0;
+                                const realCostStored = costPerBase * factor; // Cost per whatever unit is stored
+
+                                const unitSigla = unidades.find(u => u.id === ing.unidade_peso_id)?.sigla.toLowerCase() || '';
+
+                                let realCostLarge = 0;
+                                let realCostSmall = 0;
+
+                                if (['kg', 'l', 'lt'].includes(unitSigla)) {
+                                    // Sored in Large Unit
+                                    realCostLarge = realCostStored;
+                                    realCostSmall = realCostStored / 1000;
+                                } else if (['g', 'gr', 'ml'].includes(unitSigla)) {
+                                    // Stored in Small Unit
+                                    realCostLarge = realCostStored * 1000;
+                                    realCostSmall = realCostStored;
+                                } else {
+                                    // Unit (un) or others
+                                    realCostLarge = realCostStored;
+                                    realCostSmall = realCostStored;
+                                }
 
                                 return (
-                                    <tr key={ing.id} className={`hover:bg-gray-50 transition-colors ${selectedIds.includes(ing.id) ? 'bg-blue-50/50' : ''}`}>
-                                        <td className="px-4 py-4 whitespace-nowrap">
-                                            <input
-                                                type="checkbox"
-                                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
-                                                checked={selectedIds.includes(ing.id)}
-                                                onChange={() => handleSelectOne(ing.id)}
-                                            />
+                                    <tr key={ing.id} className="hover:bg-gray-50">
+                                        <td className="px-6 py-4">
+                                            <input type="checkbox" checked={selectedIngredients.includes(ing.id)} onChange={() => toggleSelect(ing.id)} />
                                         </td>
-                                        <td className="px-4 py-4 whitespace-nowrap">
-                                            <div className="text-sm font-medium text-gray-900">{ing.name}</div>
-                                            <div className="text-xs text-gray-500">{ing.description}</div>
+                                        <td className="px-6 py-4">
+                                            <div className="font-medium text-gray-800">{ing.nome_padronizado}</div>
+                                            <div className="text-xs text-gray-500">{ing.descricao_produto}</div>
                                         </td>
-                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {ing.code || '-'}
+                                        <td className="px-6 py-4">
+                                            <span className="px-2 py-1 text-xs bg-gray-100 rounded-full">{getCategoryName(ing.categoria_id || '')}</span>
                                         </td>
-                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            <div>{ing.category}</div>
-                                            <div className="text-xs text-blue-600">{ing.syntheticCategory}</div>
+                                        <td className="px-6 py-4 text-sm text-gray-600">{ing.fornecedor || '-'}</td>
+                                        <td className="px-6 py-4 text-sm font-semibold text-gray-800 text-right">
+                                            R$ {realCostLarge.toFixed(2)}
                                         </td>
-                                        <td className="px-4 py-4 whitespace-nowrap text-right text-sm text-gray-900 font-medium">
-                                            R$ {realCostPerBaseUnit.toFixed(4)}
+                                        <td className="px-6 py-4 text-sm text-gray-600 text-right">
+                                            R$ {realCostSmall.toFixed(4)}
                                         </td>
-                                        <td className="px-4 py-4 whitespace-nowrap text-right text-sm text-gray-600">
-                                            R$ {largeUnitCost.toFixed(2)}
-                                        </td>
-                                        <td className="px-4 py-4 whitespace-nowrap text-center text-sm font-medium">
-                                            <div className="flex items-center justify-center space-x-2">
-                                                <button
-                                                    onClick={() => handleEdit(ing)}
-                                                    className="text-gray-400 hover:text-blue-600 transition-colors p-1"
-                                                    title="Editar"
-                                                >
-                                                    <Pencil size={18} />
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        const { id, ...rest } = ing; // Remove existing ID
-                                                        setEditingIngredient({
-                                                            ...rest,
-                                                            id: '',
-                                                            name: `${rest.name} (Cópia)`,
-                                                            code: ''
-                                                        } as Ingredient);
-                                                        setIsFormOpen(true);
-                                                    }}
-                                                    className="text-gray-400 hover:text-green-600 transition-colors p-1"
-                                                    title="Duplicar"
-                                                >
-                                                    <Copy size={18} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDeleteClick(ing.id)}
-                                                    className="text-gray-400 hover:text-red-600 transition-colors p-1"
-                                                    title="Excluir"
-                                                >
-                                                    <Trash2 size={18} />
-                                                </button>
-                                            </div>
+                                        <td className="px-6 py-4 text-right flex justify-end gap-3">
+                                            <button
+                                                onClick={() => handleDuplicate(ing)}
+                                                title="Duplicar Insumo"
+                                                className="p-1 hover:bg-blue-50 rounded transition-colors"
+                                            >
+                                                <Copy size={18} className="text-blue-600" />
+                                            </button>
+                                            <button
+                                                onClick={() => { setEditingIngredient(ing); setIsFormOpen(true); }}
+                                                title="Editar Insumo"
+                                                className="p-1 hover:bg-yellow-50 rounded transition-colors"
+                                            >
+                                                <Pencil size={18} className="text-yellow-600" />
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleDeleteClick(ing.id); }}
+                                                title="Excluir Insumo"
+                                                className="p-1 hover:bg-red-50 rounded transition-colors"
+                                            >
+                                                <Trash2 size={18} className="text-red-600" />
+                                            </button>
                                         </td>
                                     </tr>
                                 );
                             })}
-                            {filteredIngredients.length === 0 && (
-                                <tr>
-                                    <td colSpan={7} className="px-6 py-10 text-center text-gray-500">
-                                        Nenhum insumo encontrado.
-                                    </td>
-                                </tr>
-                            )}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            {/* General Delete Confirmation Modal (Used for both single and bulk) */}
-            {(showBulkDeleteConfirm || deleteId) && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 text-center animate-fade-in">
-                        <AlertTriangle className="mx-auto text-red-500 mb-4" size={48} />
-                        <h3 className="text-xl font-bold text-gray-900 mb-2">
-                            {deleteId ? 'Excluir Item?' : `Excluir ${selectedIds.length} Itens?`}
-                        </h3>
-                        <p className="text-gray-600 mb-6 font-medium">
-                            Esta ação não pode ser desfeita.
-                        </p>
-                        <div className="flex space-x-3 justify-center">
-                            <button
-                                onClick={() => {
-                                    setShowBulkDeleteConfirm(false);
-                                    setDeleteId(null);
-                                }}
-                                className="px-5 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 font-medium"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={deleteId ? confirmDelete : confirmBulkDelete}
-                                className="px-5 py-2 text-white bg-red-600 rounded-lg hover:bg-red-700 font-medium"
-                            >
-                                Sim, Excluir
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {isFormOpen && (
                 <IngredientForm
-                    onClose={handleCloseForm}
+                    onClose={() => {
+                        setIsFormOpen(false);
+                        setEditingIngredient(undefined);
+                    }}
+                    onSave={handleSave}
                     initialData={editingIngredient}
+                    categorias={categorias}
+                    unidades={unidades}
+                    categoriasSinteticas={categoriasSinteticas}
                 />
             )}
         </div>
     );
-};
+}
