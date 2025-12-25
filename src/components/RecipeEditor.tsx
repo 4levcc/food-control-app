@@ -56,6 +56,13 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
     useEffect(() => {
         if (initialData) {
             setFormData(initialData);
+
+            // Auto-fix: If existing recipe has no code, generate one immediately
+            if (!initialData.codigo_id && initialData.setor_responsavel_id) {
+                const fixedId = generateId(initialData.setor_responsavel_id);
+                setFormData(prev => ({ ...prev, codigo_id: fixedId }));
+            }
+
             setCurrentIngredients(initialIngredients);
         } else {
             setFormData({
@@ -232,12 +239,12 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Código/ID (Auto)</label>
+                                    <label className="block text-sm font-semibold text-gray-600 mb-1">Código/ID (Auto/Manual)</label>
                                     <input
                                         type="text"
-                                        readOnly
-                                        className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
                                         value={formData.codigo_id || ''}
+                                        onChange={e => setFormData({ ...formData, codigo_id: e.target.value })}
                                         title="Código ID"
                                     />
                                 </div>

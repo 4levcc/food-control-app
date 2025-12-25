@@ -362,6 +362,7 @@ export function Recipes() {
         try {
             const { data: newRecipe, error } = await supabase.from('fichas_tecnicas').insert({
                 ...rest,
+                codigo_id: generateNextId(recipe.setor_responsavel_id || ''),
                 nome_receita: `${recipe.nome_receita} (Cópia)`
             }).select().single();
 
