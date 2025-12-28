@@ -196,7 +196,7 @@ export const exportRecipePDF = (
         const cmvPerKg = yieldKg > 0 ? totalCost / yieldKg : 0;
         const cmvPerGram = yieldKg > 0 ? totalCost / (yieldKg * 1000) : 0;
         const salePrice = recipe.preco_venda || 0;
-        const margin = salePrice > 0 ? ((salePrice - totalCost) / salePrice) * 100 : 0;
+
         const cmvPercent = salePrice > 0 ? (totalCost / salePrice) * 100 : 0;
 
         // Pricing Analysis (New)
