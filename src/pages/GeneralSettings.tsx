@@ -798,7 +798,7 @@ export const GeneralSettings: React.FC = () => {
                                     <span className="text-blue-400 font-bold">{formatPercent(marginForCalc)}%</span>
                                 </div>
                                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                                    <div className="h-full bg-blue-500 w-[var(--bar-width)]" style={{ '--bar-width': `${Math.min(marginForCalc, 100)}%` } as React.CSSProperties}></div>
+                                    <div className="h-full bg-blue-500 w-full"></div>
                                 </div>
                             </div>
                         </div>

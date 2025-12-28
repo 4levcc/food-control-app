@@ -413,8 +413,7 @@ export const Dashboard: React.FC = () => {
                                     </div>
                                     <div className="w-full bg-gray-100 rounded-full h-2">
                                         <div
-                                            className="bg-orange-500 h-2 rounded-full transition-all duration-500 w-[var(--bar-width)]"
-                                            style={{ '--bar-width': `${Math.min(sector.avgCmv, 100)}%` } as React.CSSProperties}
+                                            className="bg-orange-500 h-2 rounded-full transition-all duration-500 w-full"
                                         ></div>
                                     </div>
                                 </div>
@@ -427,8 +426,7 @@ export const Dashboard: React.FC = () => {
                                     </div>
                                     <div className="w-full bg-gray-100 rounded-full h-2">
                                         <div
-                                            className="bg-green-500 h-2 rounded-full transition-all duration-500 w-[var(--bar-width)]"
-                                            style={{ '--bar-width': `${Math.min(sector.avgMargin, 100)}%` } as React.CSSProperties}
+                                            className="bg-green-500 h-2 rounded-full transition-all duration-500 w-full"
                                         ></div>
                                     </div>
                                 </div>

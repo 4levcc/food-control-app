@@ -490,8 +490,7 @@ export const MarginsAnalytics: React.FC = () => {
                                             {/* Mini bar viz */}
                                             <div className="w-full h-1 bg-gray-200 rounded-full mt-1 ml-auto max-w-[80px]">
                                                 <div
-                                                    className={`h-1 rounded-full ${status === 'critical' ? 'bg-red-500' : status === 'adequate' ? 'bg-yellow-500' : 'bg-green-500'} w-[var(--bar-width)]`}
-                                                    style={{ '--bar-width': `${Math.max(0, Math.min(item.marginPercentage, 100))}%` } as React.CSSProperties}
+                                                    className={`h-1 rounded-full ${status === 'critical' ? 'bg-red-500' : status === 'adequate' ? 'bg-yellow-500' : 'bg-green-500'} w-full`}
                                                 />
                                             </div>
                                         </td>
