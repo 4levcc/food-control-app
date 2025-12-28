@@ -272,7 +272,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                         <h3 className="text-xl font-bold text-gray-800">
                             Ficha Técnica de Produção
                         </h3>
-                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700" title="Fechar">
+                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700" title="Fechar" aria-label="Fechar">
                             <X size={24} />
                         </button>
                     </div>
@@ -297,6 +297,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={formData.nome_receita || ''}
                                         onChange={e => setFormData({ ...formData, nome_receita: e.target.value })}
                                         title="Nome da Receita"
+                                        aria-label="Nome da Receita"
                                     />
                                 </div>
                                 <div className="md:col-span-1">
@@ -307,6 +308,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={formData.tipo_produto || ''}
                                         onChange={e => setFormData({ ...formData, tipo_produto: e.target.value as any })}
                                         title="Tipo de Produto"
+                                        aria-label="Tipo de Produto"
                                     >
                                         <option value="Final">Produto Final</option>
                                         <option value="Base">Produto Base</option>
@@ -322,6 +324,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={formData.setor_responsavel_id || ''}
                                         onChange={e => setFormData({ ...formData, setor_responsavel_id: e.target.value })}
                                         title="Setor Responsável"
+                                        aria-label="Setor Responsável"
                                     >
                                         <option value="">Selecione...</option>
                                         {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
@@ -334,6 +337,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={formData.especialidade_id || ''}
                                         onChange={e => setFormData({ ...formData, especialidade_id: e.target.value })}
                                         title="Especialidade"
+                                        aria-label="Especialidade"
                                     >
                                         <option value="">Selecione...</option>
                                         {especialidades.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
@@ -347,6 +351,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={formData.codigo_id || ''}
                                         onChange={e => setFormData({ ...formData, codigo_id: e.target.value })}
                                         title="Código ID"
+                                        aria-label="Código ID"
                                     />
                                 </div>
 
@@ -403,6 +408,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={selectedIngId}
                                         onChange={e => setSelectedIngId(e.target.value)}
                                         title="Selecione o insumo"
+                                        aria-label="Selecionar insumo"
                                     >
                                         <option value="">Selecione...</option>
                                         {insumos.map(i => (
@@ -420,6 +426,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={quantity}
                                         onChange={e => setQuantity(e.target.value)}
                                         title="Quantidade"
+                                        aria-label="Quantidade"
                                     />
                                 </div>
                                 <div className="w-24">
@@ -429,6 +436,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={selectedUnitId}
                                         onChange={e => setSelectedUnitId(e.target.value)}
                                         title="Unidade"
+                                        aria-label="Unidade"
                                     >
                                         <option value="">Und</option>
                                         {unidades
@@ -447,6 +455,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         value={usageHint}
                                         onChange={e => setUsageHint(e.target.value)}
                                         title="Dica de Uso"
+                                        aria-label="Dica de uso"
                                     />
                                 </div>
                                 <div className="flex gap-1">
@@ -457,6 +466,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                                 onClick={handleSaveIngredientComponent}
                                                 className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-colors h-[38px] w-10 flex items-center justify-center"
                                                 title="Atualizar ingrediente"
+                                                aria-label="Atualizar ingrediente"
                                             >
                                                 <Check size={20} />
                                             </button>
@@ -465,6 +475,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                                 onClick={handleCancelEdit}
                                                 className="bg-gray-200 text-gray-600 p-2 rounded-lg hover:bg-gray-300 transition-colors h-[38px] w-10 flex items-center justify-center"
                                                 title="Cancelar edição"
+                                                aria-label="Cancelar edição"
                                             >
                                                 <RotateCcw size={20} />
                                             </button>
@@ -475,6 +486,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                             onClick={handleSaveIngredientComponent}
                                             className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 transition-colors h-[38px] w-10 flex items-center justify-center"
                                             title="Adicionar ingrediente"
+                                            aria-label="Adicionar ingrediente"
                                         >
                                             <Plus size={20} />
                                         </button>
@@ -717,6 +729,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                                     disabled
                                                     className="w-full pl-10 pr-4 py-3 border border-gray-200 bg-gray-50 rounded-lg text-gray-500 font-bold text-lg"
                                                     value={verifiedSuggestedPrice.toFixed(2)}
+                                                    aria-label="Preço de venda sugerido"
                                                 />
                                             </div>
 

@@ -654,6 +654,7 @@ export function Recipes() {
                                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
+                                aria-label="Buscar receitas"
                             />
                         </div>
 
@@ -663,7 +664,9 @@ export function Recipes() {
                                 value={selectedSector}
                                 onChange={(e) => setSelectedSector(e.target.value)}
                                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                                aria-label="Filtrar por setor"
                             >
+                                <option value="all">Todos os Setores</option>
                                 <option value="all">Todos os Setores</option>
                                 {setores.map(s => <option key={s.id} value={s.id}>{s.nome}</option>)}
                             </select>
@@ -776,6 +779,7 @@ export function Recipes() {
                                         checked={selectedRecipes.length === filteredRecipes.length && filteredRecipes.length > 0}
                                         onChange={toggleSelectAll}
                                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 bg-gray-50"
+                                        aria-label="Selecionar todas as receitas"
                                     />
                                 </th>
                                 <th
@@ -859,6 +863,7 @@ export function Recipes() {
                                                 checked={selectedRecipes.includes(recipe.id)}
                                                 onChange={() => toggleSelect(recipe.id)}
                                                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                                aria-label="Selecionar receita"
                                             />
                                         </td>
                                         <td className="px-4 py-4">

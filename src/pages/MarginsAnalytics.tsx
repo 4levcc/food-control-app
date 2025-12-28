@@ -158,10 +158,18 @@ export const MarginsAnalytics: React.FC = () => {
         if (sortConfig) {
             const { key, direction } = sortConfig;
             data = [...data].sort((a, b) => {
-                if (a[key as keyof typeof a] < b[key as keyof typeof a]) {
+                const valA = a?.[key as keyof typeof a];
+                const valB = b?.[key as keyof typeof b];
+
+                // Handle null/undefined - push to end or treat as 0
+                if (valA === valB) return 0;
+                if (valA === null || valA === undefined) return 1;
+                if (valB === null || valB === undefined) return -1;
+
+                if (valA < valB) {
                     return direction === 'asc' ? -1 : 1;
                 }
-                if (a[key as keyof typeof a] > b[key as keyof typeof a]) {
+                if (valA > valB) {
                     return direction === 'asc' ? 1 : -1;
                 }
                 return 0;
@@ -303,6 +311,7 @@ export const MarginsAnalytics: React.FC = () => {
                             value={selectedSpecialty}
                             onChange={(e) => setSelectedSpecialty(e.target.value)}
                             className="bg-white border border-gray-300 rounded-lg pl-10 pr-8 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none min-w-[180px]"
+                            aria-label="Filtrar por Especialidade"
                         >
                             <option value="all">Todas as Especialidades</option>
                             {specialties.map(spec => (
@@ -481,8 +490,8 @@ export const MarginsAnalytics: React.FC = () => {
                                             {/* Mini bar viz */}
                                             <div className="w-full h-1 bg-gray-200 rounded-full mt-1 ml-auto max-w-[80px]">
                                                 <div
-                                                    className={`h-1 rounded-full ${status === 'critical' ? 'bg-red-500' : status === 'adequate' ? 'bg-yellow-500' : 'bg-green-500'}`}
-                                                    style={{ width: `${Math.max(0, Math.min(item.marginPercentage, 100))}%` }}
+                                                    className={`h-1 rounded-full ${status === 'critical' ? 'bg-red-500' : status === 'adequate' ? 'bg-yellow-500' : 'bg-green-500'} w-[var(--bar-width)]`}
+                                                    style={{ '--bar-width': `${Math.max(0, Math.min(item.marginPercentage, 100))}%` } as React.CSSProperties}
                                                 />
                                             </div>
                                         </td>
