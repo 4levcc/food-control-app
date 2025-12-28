@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, Plus, Trash2, Info, DollarSign, FileText } from 'lucide-react';
+import { X, Plus, Trash2, Info, DollarSign, FileText, Pencil, Check, RotateCcw } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import type { FichaTecnica, FtIngrediente, Insumo, UnidadeMedida, SetorResponsavel, Especialidade, Dificuldade } from '../types';
 
 interface RecipeEditorProps {
@@ -47,11 +48,39 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
 
     const [currentIngredients, setCurrentIngredients] = useState<Partial<FtIngrediente>[]>([]);
 
+    // Business Config State
+    const [variableExpensesRate, setVariableExpensesRate] = useState(0);
+    const [businessConfig, setBusinessConfig] = useState<any>(null);
+
+    // Fetch Business Config
+    useEffect(() => {
+        const fetchConfig = async () => {
+            const { data } = await supabase.from('configuracoes_negocio').select('*').single();
+            if (data) {
+                setBusinessConfig(data);
+
+                const expenses = typeof data.despesas_variaveis === 'string'
+                    ? JSON.parse(data.despesas_variaveis)
+                    : data.despesas_variaveis;
+
+                if (expenses) {
+                    const total = Array.isArray(expenses)
+                        ? expenses.reduce((acc: number, curr: any) => acc + (Number(curr.valor) || 0), 0)
+                        : 0;
+                    setVariableExpensesRate(total);
+                }
+            }
+        };
+        fetchConfig();
+    }, []);
+
+
     // Ingredient Adder State
     const [selectedIngId, setSelectedIngId] = useState('');
     const [quantity, setQuantity] = useState('');
     const [selectedUnitId, setSelectedUnitId] = useState('');
     const [usageHint, setUsageHint] = useState('');
+    const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
     useEffect(() => {
         if (initialData) {
@@ -92,21 +121,53 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
         }
     }, [formData.setor_responsavel_id, initialData, generateId]);
 
-    const handleAddIngredient = () => {
+    const handleSaveIngredientComponent = () => {
         if (!selectedIngId || !quantity || !selectedUnitId) return;
 
-        setCurrentIngredients(prev => [...prev, {
+        const newItem = {
             insumo_id: selectedIngId,
             quantidade_utilizada: parseFloat(quantity),
             unidade_utilizada_id: selectedUnitId,
             dica_uso: usageHint
-        }]);
+        };
+
+        if (editingIndex !== null) {
+            // Update existing
+            setCurrentIngredients(prev => {
+                const newArr = [...prev];
+                newArr[editingIndex] = newItem;
+                return newArr;
+            });
+            setEditingIndex(null);
+        } else {
+            // Add new
+            setCurrentIngredients(prev => [...prev, newItem]);
+        }
 
         // Reset inputs
         setSelectedIngId('');
         setQuantity('');
         setSelectedUnitId('');
         setUsageHint('');
+    };
+
+    const handleEditIngredient = (index: number) => {
+        const item = currentIngredients[index];
+        if (!item) return;
+
+        setSelectedIngId(item.insumo_id || '');
+        setQuantity(item.quantidade_utilizada?.toString() || '');
+        setSelectedUnitId(item.unidade_utilizada_id || '');
+        setUsageHint(item.dica_uso || '');
+        setEditingIndex(index);
+    };
+
+    const handleCancelEdit = () => {
+        setSelectedIngId('');
+        setQuantity('');
+        setSelectedUnitId('');
+        setUsageHint('');
+        setEditingIndex(null);
     };
 
     const handleRemoveIngredient = (index: number) => {
@@ -138,6 +199,46 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
     // CMV Calculations
     const cmvPerKg = yieldKg > 0 ? totalCost / yieldKg : 0;
     const cmvPerGram = cmvPerKg / 1000;
+
+    // -- SMART PRICING LOGIC --
+    const pricingTarget = useMemo(() => {
+        let margin = businessConfig?.margem_padrao || 0;
+        let source = 'Margem Global';
+
+        if (businessConfig?.usar_margem_por_especialidade && formData.especialidade_id) {
+            const margins = typeof businessConfig.margens_especialidades === 'string'
+                ? JSON.parse(businessConfig.margens_especialidades)
+                : businessConfig.margens_especialidades || [];
+
+            const found = margins.find((m: any) => m.especialidade_id === formData.especialidade_id);
+            if (found) {
+                margin = found.margem;
+                source = 'Margem da Especialidade';
+            }
+        }
+        return { margin, source };
+    }, [businessConfig, formData.especialidade_id]);
+
+    const targetMargin = pricingTarget.margin;
+    const marginSource = pricingTarget.source;
+
+    // Current Margin
+    const currentPrice = formData.preco_venda || 0;
+    const varExpVal = currentPrice * (variableExpensesRate / 100);
+    const marginVal = currentPrice - totalCost - varExpVal;
+    const currentMarginPct = currentPrice > 0 ? (marginVal / currentPrice) * 100 : 0;
+
+    // Suggested Price
+    const totalDeductionsPercent = variableExpensesRate + targetMargin;
+    const divisor = 1 - (totalDeductionsPercent / 100);
+    const suggestedPrice = (divisor > 0.01) ? (totalCost / divisor) : 0;
+    const verifiedSuggestedPrice = suggestedPrice > 0 ? suggestedPrice : 0;
+    const suggestedMarginVal = verifiedSuggestedPrice * (targetMargin / 100);
+
+    // Verdict Logic (Lower margin = Orange)
+    const isCurrentLower = currentMarginPct < (targetMargin - 0.01);
+    const isTargetLower = targetMargin < (currentMarginPct - 0.01);
+    const isPriceGood = currentPrice >= (suggestedPrice - 0.01);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -313,7 +414,7 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                     <label className="text-xs font-bold text-gray-500 uppercase mb-1 block">Qtd (Un)</label>
                                     <input
                                         type="number"
-                                        step="0.001"
+                                        step="0.0001"
                                         placeholder="0"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none text-sm"
                                         value={quantity}
@@ -348,14 +449,37 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                         title="Dica de Uso"
                                     />
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={handleAddIngredient}
-                                    className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 transition-colors h-[38px] w-10 flex items-center justify-center"
-                                    title="Adicionar ingrediente"
-                                >
-                                    <Plus size={20} />
-                                </button>
+                                <div className="flex gap-1">
+                                    {editingIndex !== null ? (
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveIngredientComponent}
+                                                className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-colors h-[38px] w-10 flex items-center justify-center"
+                                                title="Atualizar ingrediente"
+                                            >
+                                                <Check size={20} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleCancelEdit}
+                                                className="bg-gray-200 text-gray-600 p-2 rounded-lg hover:bg-gray-300 transition-colors h-[38px] w-10 flex items-center justify-center"
+                                                title="Cancelar edição"
+                                            >
+                                                <RotateCcw size={20} />
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveIngredientComponent}
+                                            className="bg-green-500 text-white p-2 rounded-lg hover:bg-green-600 transition-colors h-[38px] w-10 flex items-center justify-center"
+                                            title="Adicionar ingrediente"
+                                        >
+                                            <Plus size={20} />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
 
                             {/* List */}
@@ -405,14 +529,24 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                                     <td className="px-4 py-3 text-right font-semibold text-gray-800">R$ {subtotal.toFixed(2)}</td>
                                                     <td className="px-4 py-3 text-gray-500 italic">{item.dica_uso}</td>
                                                     <td className="px-4 py-3 text-right">
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => handleRemoveIngredient(idx)}
-                                                            className="text-red-400 hover:text-red-600 transition-colors"
-                                                            title="Remover"
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleEditIngredient(idx)}
+                                                                className="text-yellow-500 hover:text-yellow-700 transition-colors"
+                                                                title="Editar"
+                                                            >
+                                                                <Pencil size={16} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleRemoveIngredient(idx)}
+                                                                className="text-red-400 hover:text-red-600 transition-colors"
+                                                                title="Remover"
+                                                            >
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        </div>
                                                     </td>
                                                 </tr>
                                             );
@@ -437,12 +571,12 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                     <label className="block text-sm font-semibold text-gray-600 mb-1">Rendimento Total (em KG)</label>
                                     <input
                                         type="number"
-                                        step="0.001"
+                                        step="0.0001"
                                         min="0"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                                         value={formData.rendimento_kg || ''}
                                         onChange={e => setFormData({ ...formData, rendimento_kg: parseFloat(e.target.value) })}
-                                        placeholder="0.000"
+                                        placeholder="0.0000"
                                         title="Rendimento em KG"
                                     />
                                     <p className="text-xs text-gray-500 mt-1">Peso final sem embalagens. Se pesou em gramas, divida por 1000.</p>
@@ -450,7 +584,10 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-600 mb-1">Rendimento Total (em Gramas)</label>
                                     <div className="w-full px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-gray-700 font-bold">
-                                        {yieldGrams.toFixed(0)}
+                                        {yieldGrams < 1000 // If it's effectively 0 or small, maybe show more decimals? Just showing standard js conversion which preserves decimals
+                                            ? Number(yieldGrams.toFixed(4)).toString() // Clean unnecessary zeros but keep precision
+                                            : yieldGrams.toFixed(4).replace(/\.?0+$/, '')
+                                        }
                                     </div>
                                     <p className="text-xs text-gray-500 mt-1">Cálculo automático: KG x 1000</p>
                                 </div>
@@ -506,40 +643,113 @@ export const RecipeEditor: React.FC<RecipeEditorProps> = ({
                                     <DollarSign size={18} className="mr-2" />
                                     6. Preço de Venda
                                 </h4>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                                {/* Layout Grid 2x2 */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                                    {/* Bloco 1: Preço de Venda */}
                                     <div>
-                                        <label className="block text-sm font-semibold text-gray-600 mb-1">Preço de Venda Sugerido</label>
+                                        <label className="block text-sm font-semibold text-gray-600 mb-2">Preço de Venda</label>
                                         <div className="relative">
-                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">R$</span>
+                                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-medium">R$</span>
                                             <input
                                                 type="number"
                                                 step="0.01"
                                                 min="0"
-                                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                                                className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500 font-medium text-lg"
                                                 value={formData.preco_venda || ''}
                                                 onChange={e => setFormData({ ...formData, preco_venda: parseFloat(e.target.value) })}
                                                 placeholder="0.00"
-                                                title="Preço de Venda"
+                                                title="Preço de Venda Praticado"
                                             />
                                         </div>
-                                        <p className="text-xs text-gray-500 mt-1">Este valor será exibido na página de Produtos Finais.</p>
+                                        <p className="text-xs text-gray-500 mt-2">Valor praticado atualmente.</p>
                                     </div>
 
-                                    {/* CMV Calculations */}
-                                    <div className="bg-green-50 p-4 rounded-lg space-y-3">
-                                        <div>
-                                            <p className="text-sm font-bold text-green-800 mb-1">CMV R$ (do produto)</p>
-                                            <p className="text-2xl font-bold text-green-600">R$ {totalCost.toFixed(2)}</p>
-                                            <p className="text-xs text-green-700 font-medium">Custo Total da Receita</p>
+                                    {/* Bloco 2: CMV (Custo) */}
+                                    <div className="bg-green-50 rounded-xl p-4 border border-green-100 flex flex-col justify-center">
+                                        <div className="flex justify-between items-baseline mb-1">
+                                            <span className="text-sm font-bold text-green-800">CMV R$ (do produto)</span>
+                                            <span className="text-2xl font-bold text-green-600">R$ {totalCost.toFixed(2)}</span>
                                         </div>
-                                        <div>
-                                            <p className="text-sm font-bold text-green-800 mb-1">CMV % (do produto)</p>
-                                            <p className="text-2xl font-bold text-green-600">
+                                        <div className="flex justify-between items-baseline">
+                                            <span className="text-xs text-green-700 font-medium">Custo de Insumos e Embalagens</span>
+                                            <span className="text-lg font-bold text-green-600">
                                                 {formData.preco_venda && formData.preco_venda > 0
                                                     ? ((totalCost / formData.preco_venda) * 100).toFixed(2)
                                                     : '0.00'}%
-                                            </p>
-                                            <p className="text-xs text-green-700 font-medium">Custo Total ÷ Preço Venda</p>
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Bloco 3: Despesas Variáveis */}
+                                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 flex flex-col justify-center">
+                                        <p className="text-sm font-bold text-gray-600 uppercase mb-1">Despesas Variáveis Totais:</p>
+                                        <p className="text-3xl font-bold text-gray-800">{variableExpensesRate.toFixed(2)}%</p>
+                                        <p className="text-xs text-gray-500 font-medium mt-1">Parâmetros de Precificação</p>
+                                    </div>
+
+                                    {/* Bloco 4: Margem de Contribuição */}
+                                    <div className={`rounded-xl p-4 border flex flex-col justify-center transition-colors ${isCurrentLower
+                                        ? "bg-orange-50 border-orange-200 text-orange-900"
+                                        : "bg-blue-50 border-blue-100 text-blue-800"
+                                        }`}>
+                                        <p className="text-sm font-bold uppercase mb-1">Margem de Contribuição:</p>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className={`text-3xl font-bold ${isCurrentLower ? "text-orange-700" : "text-blue-700"}`}>{currentMarginPct.toFixed(2)}%</span>
+                                            <span className="text-lg font-medium opacity-80">| R$ {marginVal.toFixed(2)}</span>
+                                        </div>
+                                        <p className="text-xs font-medium mt-1 opacity-70">Atual</p>
+                                    </div>
+                                </div>
+
+                                {/* New Analysis / Verdict Section (Using Hoisted Logic) */}
+                                <div className="mt-6 pt-6 border-t border-gray-100">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                                        {/* Left: Suggested Pricing */}
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-600 mb-2">Preço de Venda Sugerido</label>
+                                            <div className="relative mb-2">
+                                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">R$</span>
+                                                <input
+                                                    type="text"
+                                                    disabled
+                                                    className="w-full pl-10 pr-4 py-3 border border-gray-200 bg-gray-50 rounded-lg text-gray-500 font-bold text-lg"
+                                                    value={verifiedSuggestedPrice.toFixed(2)}
+                                                />
+                                            </div>
+
+                                            {/* Target Margin Box */}
+                                            <div className={`rounded-lg p-3 border transition-colors ${isTargetLower ? 'bg-orange-50 border-orange-200' : 'bg-blue-50/50 border-blue-100'}`}>
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <p className={`text-xs font-bold uppercase ${isTargetLower ? 'text-orange-800' : 'text-blue-800'}`}>MARGEM DE CONTRIBUIÇÃO (ALVO):</p>
+                                                </div>
+                                                <div className="flex items-baseline gap-2">
+                                                    <span className={`text-lg font-bold ${isTargetLower ? 'text-orange-700' : 'text-blue-700'}`}>{targetMargin.toFixed(2)}%</span>
+                                                    <span className={`text-sm font-medium ${isTargetLower ? 'text-orange-600' : 'text-blue-600'}`}>| R$ {suggestedMarginVal.toFixed(2)}</span>
+                                                </div>
+                                                <p className={`text-xs mt-1 ${isTargetLower ? 'text-orange-500' : 'text-blue-500'}`}>Utilizando {marginSource.toLowerCase()}</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Right: The Verdict */}
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-800 mb-2">Análise:</label>
+                                            <div className={`rounded-xl p-5 border-l-4 ${isPriceGood ? 'bg-green-50 border-green-500' : 'bg-orange-50 border-orange-500'}`}>
+                                                <p className={`text-lg font-medium leading-tight mb-2 ${isPriceGood ? 'text-green-800' : 'text-orange-800'}`}>
+                                                    {isPriceGood
+                                                        ? "Margem de contribuição atual melhor ou igual à sugerida. Manter preço atual."
+                                                        : "Atenção: Seu preço está abaixo do sugerido para atingir a margem alvo."
+                                                    }
+                                                </p>
+                                                <p className={`text-sm ${isPriceGood ? 'text-green-600' : 'text-orange-700'}`}>
+                                                    {isPriceGood
+                                                        ? "Sua precificação cobre todos os custos, despesas variáveis e entrega a margem de lucro desejada."
+                                                        : `Considere ajustar para R$ ${verifiedSuggestedPrice.toFixed(2)} ou reduzir custos para alcançar a margem de ${targetMargin}%.`
+                                                    }
+                                                </p>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

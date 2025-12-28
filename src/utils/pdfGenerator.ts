@@ -9,6 +9,8 @@ interface ExportData {
     unidades: UnidadeMedida[];
     sectorName: string;
     difficultyName: string;
+    variableExpensesRate?: number;
+    targetMargin?: number;
 }
 
 export const exportRecipePDF = (
@@ -63,12 +65,24 @@ export const exportRecipePDF = (
     const yieldKg = recipe.rendimento_kg || 0;
     const yieldG = yieldKg * 1000;
 
+    // Inline style helper for labels
+    const labelStyle = { fontStyle: 'bold' as const, fillColor: SECONDARY_COLOR };
+
     const infoData = [
-        ['Código ID', recipe.codigo_id || '-'],
-        ['Setor', sectorName],
-        ['Rendimento', `${yieldKg.toFixed(3)} Kg  (${yieldG.toFixed(0)} g)`], // Added Grams
-        ['Tempo de Preparo', recipe.tempo_preparo || '-'],
-        ['Dificuldade', difficultyName],
+        [
+            { content: 'Código ID', styles: labelStyle },
+            { content: recipe.codigo_id || '-' },
+            { content: 'Setor', styles: labelStyle },
+            { content: sectorName, colSpan: 3 }
+        ],
+        [
+            { content: 'Rendimento', styles: labelStyle },
+            { content: `${yieldKg.toFixed(3)} Kg (${yieldG.toFixed(0)} g)` },
+            { content: 'Tempo', styles: labelStyle },
+            { content: recipe.tempo_preparo || '-' },
+            { content: 'Dificuldade', styles: labelStyle },
+            { content: difficultyName }
+        ]
     ];
 
     autoTable(doc, {
@@ -79,11 +93,16 @@ export const exportRecipePDF = (
             fontSize: 10,
             cellPadding: 3,
             lineColor: [226, 232, 240],
-            textColor: TEXT_COLOR
+            textColor: TEXT_COLOR,
+            valign: 'middle'
         },
         columnStyles: {
-            0: { fontStyle: 'bold', cellWidth: 50, fillColor: SECONDARY_COLOR },
-            1: { cellWidth: 100 }
+            0: { cellWidth: 35 }, // Label 1 (Expanded)
+            1: { cellWidth: 50 }, // Value 1 (Expanded)
+            2: { cellWidth: 25 }, // Label 2
+            3: { cellWidth: 25 }, // Value 2
+            4: { cellWidth: 25 }, // Label 3
+            5: { cellWidth: 'auto' } // Value 3 (Rest of space)
         },
         margin: { left: 14 }
     });
@@ -178,15 +197,41 @@ export const exportRecipePDF = (
         const cmvPerGram = yieldKg > 0 ? totalCost / (yieldKg * 1000) : 0;
         const salePrice = recipe.preco_venda || 0;
         const margin = salePrice > 0 ? ((salePrice - totalCost) / salePrice) * 100 : 0;
-        const cmvPercent = salePrice > 0 ? (totalCost / salePrice) * 100 : 0; // NEW: CMV %
+        const cmvPercent = salePrice > 0 ? (totalCost / salePrice) * 100 : 0;
+
+        // Pricing Analysis (New)
+        const varExpenses = data.variableExpensesRate || 0;
+        const targetMarg = data.targetMargin || 0;
+
+        const varExpVal = salePrice * (varExpenses / 100);
+        const contributionMarginVal = salePrice - totalCost - varExpVal;
+        const contributionMarginPct = salePrice > 0 ? (contributionMarginVal / salePrice) * 100 : 0;
+
+        const totalDeductions = varExpenses + targetMarg;
+        const div = 1 - (totalDeductions / 100);
+        const suggestedPrice = (div > 0.01) ? (totalCost / div) : 0;
+        const verifiedSuggestedPrice = suggestedPrice > 0 ? suggestedPrice : 0;
+
+        const isPriceGood = salePrice >= (suggestedPrice - 0.01);
+        const verdictText = isPriceGood
+            ? "ADEQUADO (Cobre custos e margem alvo)"
+            : "ABAIXO DA META (Margem alvo não atingida)";
 
         const financialData = [
             ['Custo Total da Receita', `R$ ${totalCost.toFixed(2)}`],
             ['CMV por Kg', `R$ ${cmvPerKg.toFixed(2)}`],
             ['CMV Unitário (g)', `R$ ${cmvPerGram.toFixed(4)}`],
-            ['Preço de Venda Sugerido', `R$ ${salePrice.toFixed(2)}`],
-            ['CMV %', `${cmvPercent.toFixed(2)}%`], // NEW Row
-            ['Margem Bruta Estimada', `${margin.toFixed(2)}%`]
+            ['Preço de Venda Praticado', `R$ ${salePrice.toFixed(2)}`],
+            ['CMV %', `${cmvPercent.toFixed(2)}%`],
+            ['', ''],
+            ['ANÁLISE DE PRECIFICAÇÃO', '-----------------------'],
+            ['Despesas Variáveis Config.', `${varExpenses.toFixed(2)}%`],
+            ['Margem de Contribuição Alvo', `${targetMarg.toFixed(2)}%`],
+            ['Preço Sugerido (para Alvo)', `R$ ${verifiedSuggestedPrice.toFixed(2)}`],
+            ['', ''],
+            ['RESULTADO ATUAL', '-----------------------'],
+            ['Margem de Contribuição Real', `${contributionMarginPct.toFixed(2)}%  (R$ ${contributionMarginVal.toFixed(2)})`],
+            ['Situação', verdictText]
         ];
 
         autoTable(doc, {

@@ -13,6 +13,18 @@ export type UnidadeMedida = Database['public']['Tables']['unidades_medida']['Row
 export type SetorResponsavel = Database['public']['Tables']['setores_responsaveis']['Row'];
 export type Especialidade = Database['public']['Tables']['especialidades']['Row'];
 export type Dificuldade = Database['public']['Tables']['dificuldades']['Row'];
+export type ConfiguracaoNegocio = Database['public']['Tables']['configuracoes_negocio']['Row'];
+
+export interface DespesaVariavel {
+    id: string;
+    nome: string;
+    valor: number;
+}
+
+export interface MargemEspecialidade {
+    especialidade_id: string;
+    margem: number;
+}
 
 // KEEPING OLD TYPES FOR BACKWARD COMPATIBILITY WHERE NEEDED
 // If existing legacy components break, we might need to re-add 'Ingredient' etc. but mapped to Insumo.

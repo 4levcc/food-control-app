@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Filter, Trash2, Copy, FileSpreadsheet, FileText, Clock, Pencil } from 'lucide-react';
+import { Plus, Search, Filter, Trash2, Copy, FileSpreadsheet, FileText, Clock, Pencil, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { RecipeEditor } from '../components/RecipeEditor'; // UPDATED IMPORT
 import { ExportRecipeModal } from '../components/ExportRecipeModal';
 import { exportRecipePDF } from '../utils/pdfGenerator';
@@ -29,9 +29,12 @@ export function Recipes() {
     const [editingRecipe, setEditingRecipe] = useState<FichaTecnica | undefined>(undefined);
     const [selectedRecipes, setSelectedRecipes] = useState<string[]>([]);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [sortConfig, setSortConfig] = useState<{ key: string | null; direction: 'asc' | 'desc' }>({ key: 'nome', direction: 'asc' });
 
     const [exportModalOpen, setExportModalOpen] = useState(false);
     const [recipeToExport, setRecipeToExport] = useState<FichaTecnica | null>(null);
+    const [businessConfig, setBusinessConfig] = useState<any>(null);
+    const [isRecalculating, setIsRecalculating] = useState(false);
 
     // Add navigation hook
     const navigate = useNavigate();
@@ -49,7 +52,8 @@ export function Recipes() {
                 unidadesRes,
                 setoresRes,
                 espRes,
-                difRes
+                difRes,
+                configRes
             ] = await Promise.all([
                 supabase.from('fichas_tecnicas').select('*').order('nome_receita'),
                 supabase.from('ft_ingredientes').select('*'),
@@ -57,7 +61,8 @@ export function Recipes() {
                 supabase.from('unidades_medida').select('*').order('sigla'),
                 supabase.from('setores_responsaveis').select('*').order('nome'),
                 supabase.from('especialidades').select('*').order('nome'),
-                supabase.from('dificuldades').select('*').order('nome')
+                supabase.from('dificuldades').select('*').order('nome'),
+                supabase.from('configuracoes_negocio').select('*').single()
             ]);
 
             if (recipesRes.data) setRecipes(recipesRes.data);
@@ -67,6 +72,7 @@ export function Recipes() {
             if (setoresRes.data) setSetores(setoresRes.data);
             if (espRes.data) setEspecialidades(espRes.data);
             if (difRes.data) setDificuldades(difRes.data);
+            if (configRes.data) setBusinessConfig(configRes.data);
 
         } catch (error) {
             console.error('Error fetching data:', error);
@@ -323,16 +329,12 @@ export function Recipes() {
                         .update({ insumo_id: substituteId })
                         .eq('insumo_id', insumo.id);
                     if (updateError) throw updateError;
-
-                    // Delete the old insumo
-                    await supabase.from('insumos').delete().eq('id', insumo.id);
+                    // Base product but no usage: Try to delete associated insumo to keep clean
+                    await supabase
+                        .from('insumos')
+                        .delete()
+                        .eq('nome_padronizado', recipeToDelete.nome_receita);
                 }
-            } else if (recipeToDelete.tipo_produto === 'Base') {
-                // Base product but no usage: Try to delete associated insumo to keep clean
-                await supabase
-                    .from('insumos')
-                    .delete()
-                    .eq('nome_padronizado', recipeToDelete.nome_receita);
             }
 
             // Delete Recipe
@@ -350,6 +352,41 @@ export function Recipes() {
         } catch (error) {
             console.error(error);
             alert('Erro ao excluir: ' + (error as any).message);
+        }
+    };
+
+
+
+    const handleRecalculateAll = async () => {
+        if (!confirm('Isso irá recalcular o custo de TODAS as fichas técnicas com base nos preços atuais dos insumos e atualizar o banco de dados. Essa operação pode levar alguns segundos. Continuar?')) return;
+
+        setIsRecalculating(true);
+        try {
+            // We can calculate all updates locally first
+            const updates = recipes.map(async (recipe) => {
+                const currentCost = calculateCost(recipe.id);
+                const price = recipe.preco_venda || 0;
+                const cmvPercent = price > 0 ? (currentCost / price) * 100 : 0;
+
+                return supabase
+                    .from('fichas_tecnicas')
+                    .update({
+                        custo_total_estimado: currentCost,
+                        cmv_produto_valor: currentCost,
+                        cmv_produto_percent: cmvPercent
+                    })
+                    .eq('id', recipe.id);
+            });
+
+            await Promise.all(updates);
+
+            await fetchData(); // Refresh list to show new values
+            alert('Custos recalculados e sincronizados com sucesso!');
+        } catch (error) {
+            console.error('Erro ao recalcular:', error);
+            alert('Ocorreu um erro ao recalcular os custos.');
+        } finally {
+            setIsRecalculating(false);
         }
     };
 
@@ -424,24 +461,124 @@ export function Recipes() {
         const sectorName = setores.find(s => s.id === recipeToExport.setor_responsavel_id)?.nome || '-';
         const difficultyName = dificuldades.find(d => d.id === recipeToExport.dificuldade_id)?.nome || '-';
 
+        // Calc Pricing Params for PDF
+        let targetMargin = businessConfig?.margem_padrao || 0;
+        if (businessConfig?.usar_margem_por_especialidade && recipeToExport.especialidade_id) {
+            const margins = typeof businessConfig.margens_especialidades === 'string'
+                ? JSON.parse(businessConfig.margens_especialidades)
+                : businessConfig.margens_especialidades || [];
+            const found = margins.find((m: any) => m.especialidade_id === recipeToExport.especialidade_id);
+            if (found) targetMargin = found.margem;
+        }
+
+        const expenses = typeof businessConfig?.despesas_variaveis === 'string'
+            ? JSON.parse(businessConfig.despesas_variaveis)
+            : businessConfig?.despesas_variaveis;
+
+        let variableExpensesRate = 0;
+        if (expenses) {
+            variableExpensesRate = Array.isArray(expenses)
+                ? expenses.reduce((acc: number, curr: any) => acc + (Number(curr.valor) || 0), 0)
+                : 0;
+        }
+
         exportRecipePDF({
             recipe: recipeToExport,
             ingredients,
             insumos,
             unidades,
             sectorName,
-            difficultyName
+            difficultyName,
+            variableExpensesRate,
+            targetMargin
         }, mode);
 
         setExportModalOpen(false);
     };
 
-    const filteredRecipes = recipes.filter(recipe => {
-        const matchesSearch = recipe.nome_receita.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesSector = selectedSector === 'all' || recipe.setor_responsavel_id === selectedSector;
-        const matchesType = selectedType === 'all' || recipe.tipo_produto === selectedType;
-        return matchesSearch && matchesSector && matchesType;
-    });
+    const filteredRecipes = useMemo(() => {
+        let result = recipes.filter(recipe => {
+            const matchesSearch = recipe.nome_receita.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesSector = selectedSector === 'all' || recipe.setor_responsavel_id === selectedSector;
+            const matchesType = selectedType === 'all' || recipe.tipo_produto === selectedType;
+            return matchesSearch && matchesSector && matchesType;
+        });
+
+        if (sortConfig.key) {
+            result.sort((a, b) => {
+                let aValue: any = '';
+                let bValue: any = '';
+
+                switch (sortConfig.key) {
+                    case 'nome':
+                        aValue = a.nome_receita.toLowerCase();
+                        bValue = b.nome_receita.toLowerCase();
+                        break;
+                    case 'codigo':
+                        aValue = a.codigo_id || '';
+                        bValue = b.codigo_id || '';
+                        break;
+                    case 'setor':
+                        aValue = setores.find(s => s.id === a.setor_responsavel_id)?.nome.toLowerCase() || '';
+                        bValue = setores.find(s => s.id === b.setor_responsavel_id)?.nome.toLowerCase() || '';
+                        break;
+                    case 'tempo':
+                        // Simple string compare for now, ideally parse mins
+                        aValue = a.tempo_preparo || '';
+                        bValue = b.tempo_preparo || '';
+                        break;
+                    case 'custo':
+                        aValue = a.cmv_produto_valor ?? calculateCost(a.id);
+                        bValue = b.cmv_produto_valor ?? calculateCost(b.id);
+                        break;
+                    case 'cmv_grama':
+                        {
+                            const costA = a.cmv_produto_valor ?? calculateCost(a.id);
+                            const yieldA = a.rendimento_kg || 0;
+                            aValue = yieldA > 0 ? costA / (yieldA * 1000) : 0;
+
+                            const costB = b.cmv_produto_valor ?? calculateCost(b.id);
+                            const yieldB = b.rendimento_kg || 0;
+                            bValue = yieldB > 0 ? costB / (yieldB * 1000) : 0;
+                        }
+                        break;
+                    case 'cmv_kg':
+                        {
+                            const costA = a.cmv_produto_valor ?? calculateCost(a.id);
+                            const yieldA = a.rendimento_kg || 0;
+                            aValue = yieldA > 0 ? costA / yieldA : 0;
+
+                            const costB = b.cmv_produto_valor ?? calculateCost(b.id);
+                            const yieldB = b.rendimento_kg || 0;
+                            bValue = yieldB > 0 ? costB / yieldB : 0;
+                        }
+                        break;
+                    default:
+                        return 0;
+                }
+
+                if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+                if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
+        return result;
+    }, [recipes, searchTerm, selectedSector, selectedType, sortConfig, setores, ftIngredientes, insumos]);
+
+    const requestSort = (key: string) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    };
+
+    const getSortIcon = (key: string) => {
+        if (sortConfig.key !== key) return <ArrowUpDown size={14} className="text-gray-400 opacity-50" />;
+        return sortConfig.direction === 'asc'
+            ? <ArrowUp size={14} className="text-blue-600" />
+            : <ArrowDown size={14} className="text-blue-600" />;
+    };
 
     const toggleSelectAll = () => {
         if (selectedRecipes.length === filteredRecipes.length) setSelectedRecipes([]);
@@ -482,16 +619,27 @@ export function Recipes() {
                     <h1 className="text-3xl font-bold text-gray-800">Fichas Técnicas (Receitas)</h1>
                     <p className="text-gray-600 mt-1">Gerencie suas receitas e custos</p>
                 </div>
-                <button
-                    onClick={() => {
-                        setEditingRecipe(undefined);
-                        setIsEditorOpen(true);
-                    }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-                >
-                    <Plus size={20} />
-                    Nova Ficha Técnica
-                </button>
+                <div className="flex gap-2">
+                    <button
+                        onClick={handleRecalculateAll}
+                        disabled={isRecalculating}
+                        className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors flex items-center gap-2 disabled:opacity-50 shadow-sm"
+                        title="Forçar recálculo de custos do banco de dados"
+                    >
+                        <Clock size={20} className={isRecalculating ? 'animate-spin' : ''} />
+                        {isRecalculating ? 'Calculando...' : 'Recalcular Custos'}
+                    </button>
+                    <button
+                        onClick={() => {
+                            setEditingRecipe(undefined);
+                            setIsEditorOpen(true);
+                        }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm"
+                    >
+                        <Plus size={20} />
+                        Nova Ficha Técnica
+                    </button>
+                </div>
             </div>
 
             {/* Recipes List */}
@@ -630,13 +778,69 @@ export function Recipes() {
                                         className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 bg-gray-50"
                                     />
                                 </th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider">Nome da Receita</th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider text-center">Código</th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider">Setor / Tipo</th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider">Tempo / Nível</th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider text-right">Custo Total</th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider text-right">CMV Unitário (g)</th>
-                                <th className="px-4 py-4 text-xs uppercase tracking-wider text-right">CMV (Kg)</th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('nome')}
+                                >
+                                    <div className="flex items-center gap-1">
+                                        Nome da Receita
+                                        {getSortIcon('nome')}
+                                    </div>
+                                </th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider text-center cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('codigo')}
+                                >
+                                    <div className="flex items-center justify-center gap-1">
+                                        Código
+                                        {getSortIcon('codigo')}
+                                    </div>
+                                </th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('setor')}
+                                >
+                                    <div className="flex items-center gap-1">
+                                        Setor / Tipo
+                                        {getSortIcon('setor')}
+                                    </div>
+                                </th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('tempo')}
+                                >
+                                    <div className="flex items-center gap-1">
+                                        Tempo / Nível
+                                        {getSortIcon('tempo')}
+                                    </div>
+                                </th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider text-right cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('custo')}
+                                >
+                                    <div className="flex items-center justify-end gap-1">
+                                        Custo Total
+                                        {getSortIcon('custo')}
+                                    </div>
+                                </th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider text-right cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('cmv_grama')}
+                                >
+                                    <div className="flex items-center justify-end gap-1">
+                                        CMV Unitário (g)
+                                        {getSortIcon('cmv_grama')}
+                                    </div>
+                                </th>
+                                <th
+                                    className="px-4 py-4 text-xs uppercase tracking-wider text-right cursor-pointer hover:bg-gray-100 transition-colors group select-none"
+                                    onClick={() => requestSort('cmv_kg')}
+                                >
+                                    <div className="flex items-center justify-end gap-1">
+                                        CMV (Kg)
+                                        {getSortIcon('cmv_kg')}
+                                    </div>
+                                </th>
                                 <th className="px-4 py-4 text-xs uppercase tracking-wider text-right">Ações</th>
                             </tr>
                         </thead>

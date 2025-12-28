@@ -254,6 +254,35 @@ export interface Database {
                     dica_uso?: string | null
                     created_at?: string
                 }
+            },
+            configuracoes_negocio: {
+                Row: {
+                    id: string
+                    despesas_fixas_total: number
+                    despesas_variaveis: Json
+                    usar_margem_por_especialidade: boolean
+                    margem_padrao: number
+                    margens_especialidades: Json
+                    created_at: string
+                }
+                Insert: {
+                    id?: string
+                    despesas_fixas_total?: number
+                    despesas_variaveis?: Json
+                    usar_margem_por_especialidade?: boolean
+                    margem_padrao?: number
+                    margens_especialidades?: Json
+                    created_at?: string
+                }
+                Update: {
+                    id?: string
+                    despesas_fixas_total?: number
+                    despesas_variaveis?: Json
+                    usar_margem_por_especialidade?: boolean
+                    margem_padrao?: number
+                    margens_especialidades?: Json
+                    created_at?: string
+                }
             }
         }
     }

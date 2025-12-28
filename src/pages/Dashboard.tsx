@@ -11,6 +11,7 @@ export const Dashboard: React.FC = () => {
     const [ingredients, setIngredients] = useState<Insumo[]>([]);
     const [ftIngredients, setFtIngredients] = useState<FtIngrediente[]>([]);
     const [sectors, setSectors] = useState<SetorResponsavel[]>([]);
+    const [variableExpensesRate, setVariableExpensesRate] = useState(0);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -20,17 +21,32 @@ export const Dashboard: React.FC = () => {
     const fetchData = async () => {
         try {
             setLoading(true);
-            const [recipesRes, ingRes, ftIngRes, sectorsRes] = await Promise.all([
+            const [recipesRes, ingRes, ftIngRes, sectorsRes, configRes] = await Promise.all([
                 supabase.from('fichas_tecnicas').select('*'),
                 supabase.from('insumos').select('*'),
                 supabase.from('ft_ingredientes').select('*'),
-                supabase.from('setores_responsaveis').select('*')
+                supabase.from('setores_responsaveis').select('*'),
+                supabase.from('configuracoes_negocio').select('*').single()
             ]);
 
             if (recipesRes.data) setRecipes(recipesRes.data);
             if (ingRes.data) setIngredients(ingRes.data);
             if (ftIngRes.data) setFtIngredients(ftIngRes.data);
             if (sectorsRes.data) setSectors(sectorsRes.data);
+
+            if (configRes.data) {
+                const data = configRes.data;
+                const expenses = typeof data.despesas_variaveis === 'string'
+                    ? JSON.parse(data.despesas_variaveis)
+                    : data.despesas_variaveis;
+
+                if (expenses) {
+                    const total = Array.isArray(expenses)
+                        ? expenses.reduce((acc: number, curr: any) => acc + (Number(curr.valor) || 0), 0)
+                        : 0;
+                    setVariableExpensesRate(total);
+                }
+            }
         } catch (error) {
             console.error('Error fetching dashboard data:', error);
         } finally {
@@ -50,13 +66,12 @@ export const Dashboard: React.FC = () => {
 
         const financialData = finalProducts.map(rec => {
             // Calculate Cost based on ingredients
-            // Calculate Cost based on ingredients
             const recIngredients = ftIngredients.filter(ft => ft.ft_id === rec.id);
 
             // Use stored total cost if available, otherwise fallback to calculation (or 0)
             let totalCost = rec.custo_total_estimado || 0;
 
-            // Optional: Recalculate if stored value is missing (Backward compatibility)
+            // Optional: Recalculate if stored value is missing
             if (totalCost === 0 && recIngredients.length > 0) {
                 totalCost = recIngredients.reduce((sum, item) => {
                     const ing = ingredients.find(i => i.id === item.insumo_id);
@@ -76,19 +91,24 @@ export const Dashboard: React.FC = () => {
             }
 
             const salePrice = rec.preco_venda || 0;
-            const grossMargin = salePrice - totalCost;
-            const marginPercent = salePrice > 0 ? (grossMargin / salePrice) * 100 : 0;
+
+            // Contribution Margin Calculation
+            // MC = Price - Cost - Variable Expenses
+            const varExpValue = salePrice * (variableExpensesRate / 100);
+            const marginVal = salePrice - totalCost - varExpValue;
+
+            // MC Percent
+            const marginPercent = salePrice > 0 ? (marginVal / salePrice) * 100 : 0;
             const cmvPercent = salePrice > 0 ? (totalCost / salePrice) * 100 : 0;
 
             return {
                 ...rec,
-                name: rec.nome_receita, // Mapping for charts
+                name: rec.nome_receita,
                 totalCost,
-                marginPercent,
+                marginPercent, // This is now Contribution Margin %
                 cmvPercent,
-                grossMargin,
                 hasPrice: salePrice > 0,
-                sector: getSectorName(rec.setor_responsavel_id) // Placeholder, need lookup or map
+                sector: getSectorName(rec.setor_responsavel_id)
             };
         });
 
@@ -124,7 +144,7 @@ export const Dashboard: React.FC = () => {
 
         const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
-        // 4. Sector Profitability (New)
+        // 4. Sector Profitability (Using Contribution Margin)
         const sectorProfitability = sectors.map(sector => {
             const sectorProducts = productsWithPrice.filter(p => p.setor_responsavel_id === sector.id);
             const count = sectorProducts.length;
@@ -137,7 +157,7 @@ export const Dashboard: React.FC = () => {
             return {
                 id: sector.id,
                 name: sector.nome,
-                avgMargin,
+                avgMargin, // Contribution Margin
                 avgCmv,
                 count
             };
@@ -161,10 +181,7 @@ export const Dashboard: React.FC = () => {
             sectorProfitability,
             COLORS
         };
-    }, [recipes, ingredients, ftIngredients, sectors]);
-
-    // Helper to fetch sectors to show proper names
-    // I will modify the main fetch to include sectors
+    }, [recipes, ingredients, ftIngredients, sectors, variableExpensesRate]);
 
     if (loading) {
         return <div className="p-8 text-center text-gray-500">Carregando dashboard...</div>;
@@ -198,11 +215,12 @@ export const Dashboard: React.FC = () => {
                     </div>
                 </div>
 
+                {/* MC Media Card */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden group hover:shadow-md transition-shadow">
                     <div className="flex justify-between items-start mb-4">
                         <div>
-                            <p className="text-sm font-medium text-gray-500">Média Margem</p>
-                            <h3 className={`text-3xl font-bold mt-1 ${stats.productsWithPriceCount === 0 ? 'text-gray-400' : stats.avgMargin >= 50 ? 'text-green-600' : 'text-yellow-600'}`}>
+                            <p className="text-sm font-medium text-gray-500">Margem de Contribuição Média</p>
+                            <h3 className={`text-3xl font-bold mt-1 ${stats.productsWithPriceCount === 0 ? 'text-gray-400' : stats.avgMargin >= 30 ? 'text-green-600' : 'text-yellow-600'}`}>
                                 {stats.productsWithPriceCount > 0 ? `${stats.avgMargin.toFixed(1)}%` : '-'}
                             </h3>
                         </div>
@@ -210,8 +228,9 @@ export const Dashboard: React.FC = () => {
                             <TrendingUp className="text-green-600" size={24} />
                         </div>
                     </div>
-                    <div className="flex items-center text-xs text-gray-500">
-                        Baseado em {stats.productsWithPriceCount} produtos com preço
+                    <div className="flex flex-col text-xs text-gray-500">
+                        <span>Baseado em {stats.productsWithPriceCount} produtos com preço</span>
+                        <span className="text-green-600 font-medium mt-1">MC = PV - Despesas Variáveis Totais</span>
                     </div>
                 </div>
 
@@ -253,7 +272,7 @@ export const Dashboard: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 {/* Main Chart: Profitability */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 lg:col-span-2">
-                    <h3 className="font-bold text-gray-900 mb-6">Top 5 - Maior Rentabilidade</h3>
+                    <h3 className="font-bold text-gray-900 mb-6">Top 5 - Maior Margem de Contribuição</h3>
                     <div className="h-72">
                         {stats.topProfitable.length > 0 ? (
                             <ResponsiveContainer width="100%" height="100%">
@@ -266,7 +285,7 @@ export const Dashboard: React.FC = () => {
                                     <XAxis type="number" unit="%" />
                                     <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 12 }} />
                                     <Tooltip
-                                        formatter={(value: number) => [`${value.toFixed(1)}%`, 'Margem']}
+                                        formatter={(value: number) => [`${value.toFixed(1)}%`, 'Margem (MC)']}
                                         contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                                     />
                                     <Bar dataKey="marginPercent" fill="#4F46E5" radius={[0, 4, 4, 0]} barSize={20} name="Margem %" />
@@ -281,8 +300,6 @@ export const Dashboard: React.FC = () => {
                 </div>
 
                 {/* Secondary Chart: Distribution */}
-                {/* Simplified: Removed Pie Chart as per strict MVP request to focus on real data and removing broken sectors if complex */}
-                {/* Or I can re-add it if I fetch sectors. Let's keep it simpler for now or just show a message if empty. */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col items-center">
                     <h3 className="font-bold text-gray-900 mb-2 w-full text-left">Distribuição por Setor</h3>
                     <div className="h-64 w-full">
@@ -333,7 +350,7 @@ export const Dashboard: React.FC = () => {
                                 <XAxis type="number" unit="%" />
                                 <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 12 }} />
                                 <Tooltip
-                                    formatter={(value: number) => [`${value.toFixed(1)}%`, 'Margem']}
+                                    formatter={(value: number) => [`${value.toFixed(1)}%`, 'Margem (MC)']}
                                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                                 />
                                 <Bar dataKey="marginPercent" fill="#EF4444" radius={[0, 4, 4, 0]} barSize={20} name="Margem %" />
@@ -360,7 +377,7 @@ export const Dashboard: React.FC = () => {
                                 <div key={alert.id} className="bg-white p-3 rounded-lg border border-red-100 shadow-sm flex justify-between items-center">
                                     <div>
                                         <p className="font-medium text-gray-900">{alert.name}</p>
-                                        <p className="text-xs text-red-600">Margem: {alert.marginPercent.toFixed(1)}%</p>
+                                        <p className="text-xs text-red-600">Margem (MC): {alert.marginPercent.toFixed(1)}%</p>
                                     </div>
                                     <div className="text-right">
                                         <span className="text-xs font-medium text-gray-500">CMV</span>
@@ -432,6 +449,5 @@ export const Dashboard: React.FC = () => {
 // Helper for sector name if needed (can implement context or fetch later)
 function getSectorName(id: string | null) {
     if (!id) return 'Outros';
-    // Simplified: return 'Geral' or id until map is ready
     return 'Geral';
 }
